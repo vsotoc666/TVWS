@@ -2,7 +2,7 @@
 analizar_entrenamiento.py
 =========================
 Analiza y visualiza las métricas del entrenamiento de SpectralSenseCNN
-a partir del historial.json generado por spectral_sense.py.
+a partir del historial.json generado por entrenamiento.py.
 
 Uso:
   python analizar_entrenamiento.py
@@ -296,7 +296,7 @@ def main():
     if not os.path.exists(args.historial):
         print(f"ERROR: No se encontró {args.historial}")
         print("Asegúrate de haber corrido primero:")
-        print("  python spectral_sense.py --modo entrenar --dataset ./dataset")
+        print("  python entrenamiento.py --modo entrenar --dataset ./dataset_v2")
         return
 
     print(f"Cargando historial: {args.historial}")

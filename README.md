@@ -80,14 +80,14 @@ Abstracción del hardware SDR. Expone una API uniforme independientemente de si 
 **Parámetros configurables:** frecuencia central, ancho de banda de muestreo, ganancia RX, tipo de hardware (`bladerf` | `limesdr` | `generic`).
 
 #### Capa 2 — Sensado espectral (`SpectralSensor`)
-Captura continua del espectro vía RX2 del bladeRF (canal dedicado a sensado). Calcula la PSD mediante FFT de 1024 puntos sobre las muestras I/Q y la entrega al clasificador CNN.
+El bladeRF (AD9361) tiene ~56 MHz de ancho de banda instantáneo máximo: es físicamente imposible capturar los 228 MHz de la banda TVWS (470–698 MHz) en una sola FFT. Esta capa orquesta un **barrido de 5 posiciones de sintonización** sobre el RX2 (canal dedicado a sensado, independiente del TX/RX de datos), cada una cubriendo una sub-banda de 56 MHz con 7–9 canales TVWS visibles. Por cada sub-banda capturada calcula la PSD (FFT de 512 puntos, ventana Hann, método Welch) y la entrega normalizada al clasificador CNN. Luego de las 5 capturas, ensambla el mapa global de los 39 canales (ver Capa 3 y §8).
 
-**Parámetros configurables:** banda de sensado, ancho de canal, tamaño FFT, período de barrido.
+**Parámetros configurables:** posiciones de barrido, ancho de sub-banda, tamaño FFT, período de ciclo.
 
-#### Capa 3 — Clasificador CNN (`ChannelClassifier`)
-Modelo CNN 1D ejecutado vía ONNX Runtime. Clasifica cada canal TVWS como libre u ocupado a partir del vector PSD. Agnóstico al modelo: acepta cualquier `.onnx` que cumpla la interfaz de entrada/salida especificada.
+#### Capa 3 — Clasificador CNN (`ChannelClassifier`) + mapa de ocupación (`SpectralOccupancyMap`)
+Modelo CNN 1D ejecutado vía ONNX Runtime. Clasifica **una sub-banda de 56 MHz por inferencia** (no la banda completa de una sola vez — ver Capa 2), con dos salidas: probabilidad de ocupación por canal y margen/SNR estimado en dB por canal (esta segunda cabeza existe para que la política `max_margin` de la Capa 4 tenga un valor continuo que comparar entre canales libres, no solo probabilidades saturadas cerca de 0). `SpectralOccupancyMap` agrega las 5 sub-bandas del ciclo en el mapa global de 39 canales, con timestamp por canal — las sub-bandas no se capturan simultáneamente, así que el mapa nunca es una foto instantánea uniforme. Agnóstico al modelo: acepta cualquier `.onnx` que cumpla la interfaz de entrada/salida especificada.
 
-**Parámetros configurables:** ruta del modelo ONNX, umbral de decisión, número de canales, frecuencia de actualización.
+**Parámetros configurables:** ruta del modelo ONNX, umbral de decisión, número de canales por sub-banda, frecuencia de actualización.
 
 #### Capa 4 — Decisión cognitiva (`CognitiveEngine`)
 Implementa la política de selección de canal y el protocolo de salto. Incluye el mecanismo de canal refugio pre-acordado como contingencia ante degradación abrupta del canal de datos.
@@ -408,39 +408,55 @@ Si el SNR del canal activo cae por debajo de un umbral configurable, ambos nodos
 
 ### 8.1 Arquitectura
 
+El modelo clasifica **una sub-banda de 56 MHz por inferencia**, no los 39 canales de toda la banda de una sola vez — el bladeRF no puede capturar 228 MHz en una sola FFT (AD9361, ~56 MHz de ancho de banda instantáneo máximo), así que comprimir la entrada a un solo vector global obligaría a sacrificar resolución espectral sin ninguna ganancia real de latencia (el presupuesto de ciclo, 100–200 ms, sobra de sobra para 5 inferencias de <1 ms cada una). Backbone de tres bloques convolucionales con kernels decrecientes + `GlobalAveragePool1D`, terminando en dos cabezas sobre un tronco compartido:
+
 | Parámetro | Valor |
 |---|---|
-| Tipo | Red neuronal convolucional 1D (1D-CNN) |
-| Entrada | Vector PSD de 1024 puntos (FFT sobre muestras I/Q del RX2) |
-| Salida | Vector de probabilidad de ocupación por canal TVWS (39 valores, 0.0–1.0) |
-| Parámetros | ~350,000–600,000 |
-| Tamaño modelo ONNX | ~2–4 MB |
-| Inferencia en campo | <10 ms (Core Ultra 5 225, ONNX Runtime CPU/iGPU) |
+| Tipo | 1D-CNN, backbone compartido + 2 cabezas (multi-task) |
+| Entrada | PSD de 512 puntos por sub-banda (56 MHz, ~109 kHz/bin), normalizado [0,1] |
+| Salida — cabeza ocupación | 9 logits (sigmoid en inferencia) — P(ocupado) por canal local de la sub-banda |
+| Salida — cabeza margen | 9 valores — margen/SNR estimado en dB por canal (negativo si hay primario, positivo si está libre) |
+| Parámetros | ~108,000 |
+| Tamaño modelo ONNX | ~25–30 KB |
+| Inferencia por sub-banda | <1 ms (Core Ultra 5 225, ONNX Runtime CPU) — medido ~0.1 ms |
+| Ciclo de sensado completo | 100–200 ms (5 sub-bandas, RX2 bladeRF, barrido continuo) |
 | Entrenamiento | PyTorch — Google Colab Pro (T4 GPU) |
 | Despliegue | `torch.onnx.export()` → ONNX Runtime |
-| Ciclo de sensado | 100–200 ms (RX2 bladeRF, barrido continuo) |
 
-### 8.2 Interfaz del clasificador
+**Por qué dos cabezas:** la Capa 4 (`CognitiveEngine`) soporta una política `max_margin`, pero P(ocupado) cerca de 0 no distingue cuál de varios canales libres está más limpio — todos saturan cerca de 0 por igual. La cabeza de margen, entrenada en paralelo sobre el mismo backbone (costo casi nulo en parámetros), da un valor continuo comparable entre canales libres.
+
+### 8.2 Interfaz del clasificador y agregación a 39 canales
 
 ```python
-# Contrato de interfaz — ChannelClassifier
+# Contrato de interfaz — ChannelClassifier (una sub-banda por llamada)
 class ChannelClassifier:
-    def __init__(self, model_path: str, threshold: float = 0.5):
+    def __init__(self, model_path: str, threshold: float = 0.20):
         ...
 
     def classify(self, psd_vector: np.ndarray) -> dict:
         """
         Args:
-            psd_vector: array de 1024 puntos float32 (PSD normalizada)
+            psd_vector: array de 512 puntos float32, PSD normalizada de UNA sub-banda
         Returns:
             {
-                'occupancy': np.ndarray,      # [39] probabilidades por canal
-                'free_channels': list[int],   # índices de canales libres
-                'inference_ms': float,        # tiempo de inferencia
-                'confidence': float           # confianza promedio de la decisión
+                'occupancy':   np.ndarray,    # [9] P(ocupado) por canal local
+                'margen_db':   np.ndarray,    # [9] margen estimado por canal local
+                'free_local':  list[int],     # índices locales libres
+                'inference_ms': float,
+                'confidence':  float          # mean(|p-0.5|*2): margen real a la
+                                               # decisión, no mean(occupancy)
             }
         """
+
+# SpectralOccupancyMap agrega las 5 llamadas de classify() (una por posición
+# de barrido) en el mapa global de 39 canales que consume CognitiveEngine.
+# Cada canal del mapa lleva su propio timestamp: las 5 sub-bandas no se
+# capturan simultáneamente, así que el mapa nunca es una foto instantánea
+# uniforme — el canal recién barrido es fresco, el de la posición anterior
+# puede tener hasta ~150 ms de antigüedad dentro del mismo ciclo.
 ```
+
+`free_channels`/`libres_por_indice` no vienen preordenados por ninguna política — ese ranking (`lowest_free`/`max_margin`/`least_used`) es responsabilidad exclusiva de `CognitiveEngine`, no del clasificador.
 
 ### 8.3 Dataset y domain mismatch
 
@@ -449,16 +465,17 @@ class ChannelClassifier:
 | Captura dataset (Fase 1) | RTL-SDR | 8 bits | 470–698 MHz |
 | Inferencia en campo | bladeRF 2.0 | 12 bits | 470–698 MHz |
 
-**Mitigación:** Normalización por rango dinámico antes de la FFT en el preprocesamiento. El proyecto documenta el impacto medido de este domain mismatch sobre la accuracy del modelo como contribución técnica.
+**Mitigación:** normalización por percentiles robustos (5/95) antes de alimentar la CNN, idéntica en entrenamiento e inferencia. El proyecto documenta el impacto medido de este domain mismatch sobre la accuracy del modelo como contribución técnica.
 
 ### 8.4 KPIs del modelo (objetivos conservadores)
 
 | Métrica | Objetivo | Condición |
 |---|---|---|
-| Accuracy en dataset de prueba | >85% | Laboratorio |
-| Tasa de falsos negativos (libre→ocupado) | <10% | Laboratorio |
-| Tiempo de inferencia | <10 ms | Core Ultra 5 + ONNX |
-| Tiempo de evacuación de canal E2E | <300 ms | Campo real |
+| Tasa de falsos negativos (libre→ocupado) | <5% | Asimetría regulatoria: interferir a un primario es la falla inaceptable, no la conservadora |
+| Umbral operativo de campo | 0.20 (no 0.5) | Mismo razonamiento de costo asimétrico; 0.5 se usa solo para evaluar calidad del modelo en entrenamiento |
+| Tiempo de inferencia por sub-banda | <2 ms | Core Ultra 5 225, ONNX Runtime CPU — deja amplio margen sobre el ciclo de 100–200 ms |
+| Tamaño ONNX | <500 KB | El diseño con GAP lo logra naturalmente; deja casi todo el presupuesto original de 2–4 MB sin usar |
+| Tiempo de evacuación de canal E2E | <300 ms | Campo real (sensado + CNN + control in-band + guarda) |
 
 ---
 
