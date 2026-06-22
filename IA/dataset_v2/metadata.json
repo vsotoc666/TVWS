@@ -1,0 +1,37 @@
+{
+  "tipo": "sintetico_v2_subbanda_completa",
+  "formato": "igual al de SpectralSenseInferencia (512 pts, 9 etiquetas/sub-banda)",
+  "n_muestras": {
+    "train": 4200,
+    "val": 900,
+    "test": 900
+  },
+  "n_fft": 512,
+  "n_canales": 9,
+  "bins_por_canal": 55,
+  "ocupacion_media_objetivo": 0.32,
+  "balance_global_ocupado": 0.324,
+  "balance_por_posicion_local": {
+    "canal_local_0": 0.324,
+    "canal_local_1": 0.316,
+    "canal_local_2": 0.321,
+    "canal_local_3": 0.324,
+    "canal_local_4": 0.322,
+    "canal_local_5": 0.325,
+    "canal_local_6": 0.319,
+    "canal_local_7": 0.337,
+    "canal_local_8": 0.326
+  },
+  "total_etiquetas_validas": 51632,
+  "semilla": 42,
+  "normalizacion": "percentil_5_95",
+  "dc_offset_corr": true,
+  "señales_sim": [
+    "ISDB-Tb (lóbulo plano + flancos coseno alzado + pilotos)",
+    "ruido térmico por sub-banda (nivel variable)",
+    "fuga espectral entre canales adyacentes",
+    "respuesta en frecuencia bladeRF (rolloff + ripple)",
+    "LO leakage / DC offset bladeRF",
+    "ruido de fase cerca de bordes de canal"
+  ]
+}

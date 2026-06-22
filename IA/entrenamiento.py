@@ -11,6 +11,17 @@ Uso:
 
 import os
 import sys
+
+# torch trae su propio runtime OpenMP (libiomp5md.dll) y scikit-learn/scipy
+# traen otro (libomp.dll); en Windows, cargar ambos en el mismo proceso sin
+# limitar hilos provoca contención de hilos que puede terminar en un crash
+# nativo (access violation) que el usuario percibe como "error de memoria"
+# y que no deja traceback de Python ni flushea stdout. Deben fijarse ANTES
+# de importar numpy/torch para que el runtime OpenMP los respete al iniciar.
+os.environ.setdefault("OMP_NUM_THREADS", "4")
+os.environ.setdefault("MKL_NUM_THREADS", "4")
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import time
 import json
 import argparse
@@ -24,6 +35,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import roc_auc_score, fbeta_score
+
+torch.set_num_threads(4)
 
 from nucleo import (
     SpectralSenseCNN, BCEWithLogitsLossMasked, MargenLossMasked,
@@ -50,26 +63,39 @@ class TVWSDataset(Dataset):
     def __init__(self, directorio: str, split: str = "train", augmentar: bool = True):
         self.directorio = os.path.join(directorio, split)
         self.augmentar  = augmentar and (split == "train")
-        self.archivos   = sorted(f for f in os.listdir(self.directorio) if f.endswith(".npz"))
-        if len(self.archivos) == 0:
+        archivos = sorted(f for f in os.listdir(self.directorio) if f.endswith(".npz"))
+        if len(archivos) == 0:
             raise RuntimeError(f"No se encontraron archivos .npz en {self.directorio}")
 
+        # El dataset completo pesa unos pocos MB, así que se precarga entero en
+        # RAM en vez de reabrir cada .npz en cada __getitem__. Este directorio
+        # vive en una unidad virtual de Google Drive (G:\Mi unidad\...), cuyo
+        # driver de sincronización en la nube puede fallar reads intermitentes
+        # bajo el acceso aleatorio repetido de un DataLoader (shuffle=True en
+        # cada época) con un OSError [Errno 22] que mata el proceso a mitad de
+        # entrenamiento sin traceback útil. Leer una sola vez evita ese I/O.
+        self.psd, self.etiquetas, self.margen, self.margen_valido = [], [], [], []
+        self.posicion = []
+        for archivo in archivos:
+            data = np.load(os.path.join(self.directorio, archivo))
+            self.psd.append(data["psd"].astype(np.float32))
+            self.etiquetas.append(data["etiquetas"].astype(np.float32))
+            self.posicion.append(int(data["posicion"]) if "posicion" in data.files else -1)
+            if "margen_db" in data.files:
+                self.margen.append(data["margen_db"].astype(np.float32))
+                self.margen_valido.append(np.ones(N_CANALES_MAX, dtype=np.float32))
+            else:
+                self.margen.append(np.zeros(N_CANALES_MAX, dtype=np.float32))
+                self.margen_valido.append(np.zeros(N_CANALES_MAX, dtype=np.float32))
+
     def __len__(self) -> int:
-        return len(self.archivos)
+        return len(self.psd)
 
     def __getitem__(self, idx: int):
-        ruta = os.path.join(self.directorio, self.archivos[idx])
-        data = np.load(ruta)
-
-        psd       = data["psd"].astype(np.float32)
-        etiquetas = data["etiquetas"].astype(np.float32)
-
-        if "margen_db" in data.files:
-            margen        = data["margen_db"].astype(np.float32)
-            margen_valido = np.ones(N_CANALES_MAX, dtype=np.float32)
-        else:
-            margen        = np.zeros(N_CANALES_MAX, dtype=np.float32)
-            margen_valido = np.zeros(N_CANALES_MAX, dtype=np.float32)
+        psd       = self.psd[idx]
+        etiquetas = self.etiquetas[idx]
+        margen        = self.margen[idx]
+        margen_valido = self.margen_valido[idx]
 
         if self.augmentar:
             psd = self._augmentar(psd)

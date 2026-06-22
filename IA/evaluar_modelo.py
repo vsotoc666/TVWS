@@ -77,9 +77,7 @@ def obtener_predicciones(modelo: SpectralSenseCNN, dataset_dir: str) -> dict:
             probs     = torch.sigmoid(logits).squeeze().numpy()
             todas_probs.append(probs)
             todas_etiq.append(etiq.numpy())
-            # posicion no la expone TVWSDataset directamente; releer del npz
-            ruta = os.path.join(dataset_dir, "test", ds.archivos[i])
-            todas_pos.append(int(np.load(ruta)["posicion"]))
+            todas_pos.append(ds.posicion[i])
 
     return {
         "probs":     np.array(todas_probs),     # (N, 9)
