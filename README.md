@@ -355,168 +355,57 @@ NOTA: Subportadora #255 (DC) EVITADA — LimeSDR tiene LO leakage en DC
 
 ---
 
-## 7. Canal de Control — LoRa SX1262
+## 7. Arquitectura del Canal de Control In-Band
 
-### 7.1 Configuración del Módulo
+El sistema prescinde de canales de control fuera de banda (como LoRa) para simplificar el hardware y reducir costos, operando una estrategia de **Control In-Band** directamente sobre la trama OFDM. 
 
-| Parámetro | Valor |
-|-----------|-------|
-| Chip | Semtech SX1262 |
-| Frecuencia | 902–928 MHz (ISM, banda 915 MHz) |
-| Potencia TX | ≥22 dBm |
-| Sensibilidad RX | ≤−136 dBm (SF12) |
-| Spreading Factor | SF12 (máxima cobertura) |
-| Ancho de banda | BW125 kHz |
-| Interfaz | USB-C (modo CDC-ACM — puerto serie) |
-| Firmware | Puente serie transparente |
-| Control desde Python | `pyserial` — 10 líneas de código |
-| Antena | Colineal 5 dBi, 915 MHz, N-hembra, IP65 |
-| Montaje | Side arm 60 cm bajo la LPDA en el mismo mástil |
-| Separación LPDA–LoRa | ~1.83λ a 915 MHz → >20 dB de aislamiento |
+### 7.1 Estructura del Campo de Control
+Se reservan 4 subportadoras OFDM dedicadas (ej. sub #254–257, evadiendo la fuga DC en #255) moduladas en BPSK. Esto otorga una capacidad neta de **3 bits por símbolo OFDM**.
 
-### 7.2 Estructura del Mensaje de Control (Gateway → Cliente)
+Los mensajes de control son de **32 bits (4 bytes)**, fragmentados a lo largo de 11 símbolos OFDM (transmitidos en ~1 ms). La estructura del paquete depende del tipo de instrucción:
 
-```
-Paquete LoRa DL — ~50 bytes totales
+**Formato A: Salto Inmediato (Flag `00`)**
+Se usa cuando la IA predice una degradación gradual y hay tiempo de evacuar ordenadamente.
+*   `Flag_Type` [2 bits]: `00`
+*   `next_ch` [6 bits]: ID del canal destino (14–52)
+*   `t_hop` [8 bits]: Tiempo hasta el salto (en slots de 10ms)
+*   `CRC-16` [16 bits]: Detección de errores obligatoria
 
-Byte 0:    next_ch     [6 bits útiles] — índice del canal TVWS destino (0–38)
-Byte 1:    t_hop       [8 bits] — tiempo en slots de 10 ms hasta el salto
-Byte 2:    mod_scheme  [2 bits] — 00=BPSK, 01=QPSK, 10=16QAM, 11=reservado
-Byte 3:    flags       [8 bits] — bits de estado del sistema
-Bytes 4–5: CRC-16      — checksum de bytes 0–3
-Bytes 6–49: padding + metadatos opcionales (RSSI del primario, nivel de ocupación)
-```
-
-### 7.3 Estructura del Mensaje de Retorno (Cliente → Gateway)
-
-```
-Paquete LoRa UL — ~30 bytes totales
-
-Byte 0:    hop_ack     [1 bit] — confirmación de recepción del salto
-Byte 0:    ch_actual   [6 bits] — canal actualmente sintonizado en el Cliente
-Byte 1:    RSSI_rx     [8 bits] — RSSI medido del downlink (dBm + 128)
-Byte 2:    SNR_rx      [8 bits] — SNR estimado del downlink (dB × 4)
-Byte 3:    BER_est     [8 bits] — BER estimada (escala logarítmica)
-Bytes 4–5: CRC-16
-```
-
-### 7.4 Flujo TX en el Gateway (control hacia Cliente)
-
-```
-[CNN decide: next_ch=36, t_hop=10ms, mod=QPSK]
-    ↓
-[1] Python construye paquete de control (50 bytes)
-    ↓
-[2] pyserial escribe al puerto CDC-ACM del SX1262 Gateway
-    /dev/ttyUSB0 (Linux) — 115200 baud
-    ↓
-[3] SX1262 Gateway: modulación LoRa SF12 + BW125
-    Tiempo de transmisión air-time: ~2 s para 50 bytes con SF12
-    ↓
-[4] Antena colineal 5 dBi → aire (915 MHz)
-    EIRP: ≥27 dBm
-```
-
-### 7.5 Flujo RX en el Cliente (recepción del control)
-
-```
-[Antena colineal 5 dBi recibe señal a ~−87 dBm]
-    (Margen: +39.5 dB — enlace extremadamente robusto)
-    ↓
-[1] SX1262 Cliente desmodula LoRa SF12
-    ↓
-[2] Puerto CDC-ACM → pyserial en Python del Mini PC N100
-    ↓
-[3] Parser verifica CRC-16
-    Si válido: registra next_ch y t_hop
-    Si inválido: descarta (el Gateway reenvía en el próximo ciclo)
-    ↓
-[4] En T = t_hop × 10 ms:
-    GNU Radio recibe señal de resintonización
-    LimeSDR PLL configura nueva frecuencia (lock: ~1–3 ms)
-    Ventana de silencio: 10 ms
-    ↓
-[5] Confirma salto vía LoRa UL (hop_ack=1, ch_actual=next_ch)
-```
-
-### 7.6 Link Budget del Canal LoRa
-
-| Parámetro | Valor |
-|-----------|-------|
-| EIRP TX (ambos nodos) | ≥+27 dBm (+22 dBm TX + 5 dBi antena) |
-| FSPL a 20 km, 915 MHz | −116.7 dB |
-| Ganancia antena RX | +5 dBi |
-| Potencia recibida estimada | ≈ −84.7 dBm |
-| Sensibilidad SF12 | −136 dBm |
-| **Margen del enlace LoRa** | **+51.3 dB — prácticamente irrompible** |
+**Formato B: Actualización de Respaldo Proactiva (Flag `01`)**
+Se transmite continuamente durante el periodo de enlace estable. El Gateway actualiza al Cliente con los mejores canales de respaldo empacando dos canales por mensaje para maximizar la eficiencia.
+*   `Flag_Type` [2 bits]: `01`
+*   `Channel_1` [6 bits]: El mejor canal de respaldo primario
+*   `Channel_2` [6 bits]: El canal de respaldo secundario
+*   `Mod_Scheme` [2 bits]: Modulación recomendada al llegar (ej. `00`=BPSK)
+*   `Power_Flag` [1 bit]: Reducción de potencia si el canal adyacente a TV está activo
+*   `Quiet_Flag` [1 bit]: Ordena silencio de sensado de 10ms al aterrizar
+*   `CRC-16` [16 bits]: Detección de errores
 
 ---
 
-## 8. Canal de Control In-Band — Opción A (propuesta)
+## 8. Flujo de Contingencia y Rendezvous
 
-La Opción A complementa al LoRa añadiendo el campo de control directamente en las subportadoras OFDM, reduciendo la latencia del control de 100 ms a <1 ms para el caso downlink.
+Para solventar el problema clásico de "Fallo de Rendezvous" (caída abrupta del enlace por interferencia primaria), se implementa un mecanismo de **Targeted Rendezvous**. Dado que el Cliente no posee capacidad de sensado espectral (está "ciego"), depende de la lista de respaldo (Formato B) construida colaborativamente durante el periodo estable.
 
-### 8.1 Estructura del Campo de Control In-Band
+### 8.1 Recuperación de Enlace (< 100 ms)
+**Cuando ocurre una interferencia abrupta y el enlace OFDM colapsa:**
+1.  **En el Gateway (Inteligente):**
+    *   Detecta la caída del enlace (ausencia de ACKs en el uplink).
+    *   La CNN verifica el estado actual de los canales de la lista de respaldo compartida. Salta al canal libre de mayor prioridad y emite balizas de sincronización OFDM.
+2.  **En el Cliente (Ciego):**
+    *   Al expirar su timeout de recepción, inicia la secuencia de contingencia.
+    *   Salta exclusivamente siguiendo el orden de la lista de respaldo pre-acordada (ej. `Channel_1`, luego `Channel_2`).
+    *   Se detiene ~20 ms en cada canal esperando el preámbulo del Gateway.
+    *   Al encontrar la baliza, configura los parámetros extraídos de la lista (Power, Modulación) y el enlace se restaura.
 
-```
-4 subportadoras OFDM dedicadas (sub #254–257), capacidad por símbolo (BPSK):
-
-Sub #254: 1 bit efectivo
-Sub #255: EVITADA — DC offset del LimeSDR
-Sub #256: 1 bit efectivo
-Sub #257: 1 bit efectivo
-
-Capacidad neta instantánea: 3 bits por cada símbolo OFDM.
-Mensaje de control completo: 4 bytes (32 bits) [next_ch + t_hop + padding + CRC-16].
-Transmisión: El mensaje de 32 bits se fragmenta secuencialmente a lo largo de 11 símbolos OFDM.
-Tiempo de actualización total: 11 símbolos × 89 µs ≈ 0.98 milisegundos (< 1 ms).
-```
-
-### 8.2 TX del Campo de Control (en GNU Radio Gateway)
-
-```
-[CNN produce: next_ch=36, t_hop=10]
-    ↓
-[1] Construye paquete de 4 bytes en Python
-    next_ch=36 (0b100100) | t_hop=10 | CRC-16
-    ↓
-[2] Tagged Stream Mux (GNU Radio)
-    Inyecta los 4 bytes en las posiciones #254, #256, #257 del vector
-    antes de pasar al OFDM Carrier Allocator
-    ↓
-[3] OFDM Carrier Allocator asigna:
-    · Posiciones de datos: símbolos QPSK de los datos de usuario
-    · Posiciones piloto: valores BPSK fijos
-    · Posiciones control (#254, 256, 257): símbolos del campo de control
-    · Posición guarda: 0+0j
-    ↓
-[4] IFFT + CP → bladeRF → PA → antena
-    El campo de control viaja embebido en cada símbolo OFDM
-    Sin interrupción del flujo de datos
-```
-
-### 8.3 RX del Campo de Control (en GNU Radio Cliente)
-
-```
-[FFT recupera los 512 símbolos en frecuencia]
-    ↓
-[1] Tag Source Block (GNU Radio personalizado)
-    Extrae las subportadoras #254, #256, #257 ANTES del demapeador de datos
-    ↓
-[2] Decodifica 4 bytes → next_ch + t_hop + CRC-16
-    ↓
-[3] Verifica CRC-16:
-    Si válido: programa salto en t_hop × 10 ms
-    Si inválido: descarta — espera confirmación en próximo símbolo (cada 89 µs)
-    ↓
-[4] El proceso de demodulación de datos continúa normalmente en paralelo
-```
-
-### 8.4 Redundancia y Robustez
-
-El campo de control se repite en **cada símbolo OFDM** durante el período de pre-anuncio (10–20 tramas = 100–200 ms). Si la tasa de error de paquete (PER) del canal es del 10%, la probabilidad de que fallen 20 intentos independientes es 0.1^20 ≈ 10^-20. En la práctica, el campo de control llega con certeza.
+### 8.2 Ventajas de este Diseño
+*   **Time-to-Rendezvous (TTR) Mínimo:** Al restringir la búsqueda a una lista corta de alta probabilidad, el tiempo de reconexión baja a entre **40 y 100 milisegundos**.
+*   **Ahorro de Hardware:** Elimina módulos SX1262 y antenas LoRa.
+*   **Mitigación de Fuga Espectral (OOBE):** Mediante el `Power_Flag` el Cliente sabe si debe aplicar "backoff" a su PA para proteger a los canales primarios adyacentes a su frecuencia de respaldo.
 
 ---
+
+
 
 ## 9. Modelo de IA — CNN de Sensado Espectral
 
