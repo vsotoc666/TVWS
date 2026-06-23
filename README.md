@@ -46,14 +46,13 @@ Enlace punto a punto NLOS/LOS parcial de **15–20 km** entre dos nodos:
 | Plano | Medio | Dirección | Función |
 |-------|-------|-----------|---------|
 | **Datos** | OFDM 6 MHz en TVWS | DL: Gateway→Cliente / UL: Cliente→Gateway | Tráfico de usuario (video, voz, datos) |
-| **Control** | LoRa SX1262 a 915 MHz | Bidireccional | Señalización cognitiva (next_ch, t_hop, ACK, métricas) |
+| **Control** | In-Band OFDM (Subportadoras dedicadas) | Bidireccional | Señalización cognitiva (next_ch, t_hop, ACK, métricas) |
 | **Sensado** | bladeRF RX2 | Gateway escucha espectro | Entrada de datos para la CNN |
 
 ### 2.3 Banda de Operación
 
 - **TVWS UHF:** 470–698 MHz (plan de atribución peruano)
 - **Canales disponibles:** 39 canales de 6 MHz entre 470 y 698 MHz
-- **Canal de control:** 915 MHz (ISM, fuera de banda TVWS)
 - **Frecuencia de referencia para cálculos:** 600 MHz (centro de banda)
 
 ---
@@ -69,8 +68,6 @@ Enlace punto a punto NLOS/LOS parcial de **15–20 km** entre dos nodos:
 | PA | 400–1000 MHz, 2W (33 dBm), clase AB, 12V | Amplificar TX antes de la antena |
 | LNA RX (propuesto) | 400–1000 MHz, NF ≤1 dB, ganancia 20 dB | Bajar figura de ruido del RX uplink |
 | Antena enlace | LPDA 400–2700 MHz, 10 dBi, conector N-hembra | TX downlink + RX uplink |
-| Módulo LoRa | SX1262, 915 MHz, TX ≥22 dBm, USB-C CDC-ACM | Canal de control bidireccional |
-| Antena LoRa | Colineal 900–930 MHz, 5 dBi, N-hembra, IP65 | Enlace de control |
 | Cable RF principal | LMR-400 3.5m + conectores N + supresor GDT | Baja pérdida entre PA y antena |
 | Pigtail TX | RG-316 0.6m, bladeRF → PA | Tramo corto de baja pérdida |
 
@@ -101,8 +98,6 @@ LPDA 10 dBi
 | PC | SBC tipo Raspberry | GNU Radio RX/TX (sin IA) |
 | LNA RX | 400–1000 MHz, NF ≤1 dB, ganancia 20 dB | Bajar figura de ruido del RX downlink |
 | Antena enlace | LPDA 400–2700 MHz, 10 dBi, conector N-hembra | RX downlink + TX uplink |
-| Módulo LoRa | SX1262, 915 MHz, TX ≥22 dBm, USB-C CDC-ACM | Canal de control bidireccional |
-| Antena LoRa | Colineal 900–930 MHz, 5 dBi, N-hembra, IP65 | Enlace de control |
 | Cable RF principal | LMR-400 3.5m | Mismas pérdidas que Gateway |
 | Gabinete | IP65 | Protección ambiental en campo |
 
@@ -285,8 +280,7 @@ NOTA: Subportadora #255 (DC) EVITADA — LimeSDR tiene LO leakage en DC
 [Datos usuario hacia Internet]
     ↓
 [1] Capa MAC — empaquetado
-    Igual que downlink pero sin campo de control
-    (el control de retorno viaja por LoRa)
+    Igual que downlink, incluyendo campo de control in-band (ACK Uplink)
     ↓
 [2] Codificación FEC
     Tasa 1/2 preferida (margen más ajustado en uplink)
@@ -299,7 +293,7 @@ NOTA: Subportadora #255 (DC) EVITADA — LimeSDR tiene LO leakage en DC
     ↓
 [4] OFDM Carrier Allocator
     Misma estructura de 512 subportadoras
-    Sin campo de control in-band (el control sube por LoRa)
+    Incluye campo de control in-band (#254–257) para enviar ACK y métricas
     ↓
 [5] IFFT 512 + CP 128 muestras
     ↓
@@ -372,13 +366,23 @@ Se usa cuando la IA predice una degradación gradual y hay tiempo de evacuar ord
 *   `CRC-16` [16 bits]: Detección de errores obligatoria
 
 **Formato B: Actualización de Respaldo Proactiva (Flag `01`)**
-Se transmite continuamente durante el periodo de enlace estable. El Gateway actualiza al Cliente con los mejores canales de respaldo empacando dos canales por mensaje para maximizar la eficiencia.
+Se transmite continuamente durante el periodo de enlace estable. El Gateway actualiza al Cliente con un canal de respaldo a la vez, reservando bits para instrucciones precisas.
 *   `Flag_Type` [2 bits]: `01`
-*   `Channel_1` [6 bits]: El mejor canal de respaldo primario
-*   `Channel_2` [6 bits]: El canal de respaldo secundario
+*   `Rank_ID` [2 bits]: Posición en la lista de respaldo (0 a 3)
+*   `Channel_ID` [6 bits]: ID del canal TVWS asignado
 *   `Mod_Scheme` [2 bits]: Modulación recomendada al llegar (ej. `00`=BPSK)
-*   `Power_Flag` [1 bit]: Reducción de potencia si el canal adyacente a TV está activo
+*   `Power_Flag` [1 bit]: Reducción de ganancia TX si el canal adyacente a TV está activo
 *   `Quiet_Flag` [1 bit]: Ordena silencio de sensado de 10ms al aterrizar
+*   `Padding` [2 bits]: Bits reservados para uso futuro
+*   `CRC-16` [16 bits]: Detección de errores
+
+**Formato C: ACK y Métricas Uplink (Flag `10` - Cliente a Gateway)**
+El Cliente usa sus subportadoras in-band (uplink) para confirmar comandos y reportar la salud del enlace al Gateway (reemplazando el retorno LoRa).
+*   `Flag_Type` [2 bits]: `10`
+*   `ACK_Type` [2 bits]: `00`=Update Respaldo recibido, `01`=Salto completado
+*   `Rank_ACK` [2 bits]: Posición de respaldo que está confirmando (si aplica)
+*   `RSSI_rx` [5 bits]: Nivel de señal recibida (mapeado de -100 a -68 dBm)
+*   `SNR_rx` [5 bits]: Relación señal a ruido (mapeado de 0 a 31 dB)
 *   `CRC-16` [16 bits]: Detección de errores
 
 ---
@@ -401,7 +405,7 @@ Para solventar el problema clásico de "Fallo de Rendezvous" (caída abrupta del
 ### 8.2 Ventajas de este Diseño
 *   **Time-to-Rendezvous (TTR) Mínimo:** Al restringir la búsqueda a una lista corta de alta probabilidad, el tiempo de reconexión baja a entre **40 y 100 milisegundos**.
 *   **Ahorro de Hardware:** Elimina módulos SX1262 y antenas LoRa.
-*   **Mitigación de Fuga Espectral (OOBE):** Mediante el `Power_Flag` el Cliente sabe si debe aplicar "backoff" a su PA para proteger a los canales primarios adyacentes a su frecuencia de respaldo.
+*   **Mitigación de Fuga Espectral (OOBE):** Mediante el `Power_Flag` el Cliente sabe si debe aplicar "backoff" a la ganancia de transmisión (TX gain) de su SDR para proteger a los canales primarios adyacentes a su frecuencia de respaldo.
 
 ---
 
@@ -448,9 +452,9 @@ Para solventar el problema clásico de "Fallo de Rendezvous" (caída abrupta del
 | Inferencia CNN (ONNX) | <5 ms | Documentado |
 | Ventana de guarda en salto | 10 ms | Diseño (PLL lock + margen) |
 | Ciclo de sensado CNN | 100–200 ms | bladeRF RX2 |
-| Canal LoRa (50 bytes SF12) | ~100 ms | Air-time SX1262 |
+| Canal Control In-Band (32 bits) | ~1 ms | 11 símbolos OFDM |
 | Latencia E2E datos | 5–15 ms | Prop + procesamiento GNU Radio |
-| **Tiempo de evacuación de canal** | **<300 ms** | Sensado + CNN + LoRa + guarda |
+| **Tiempo de evacuación de canal** | **<150 ms** | Sensado + CNN + In-Band + guarda |
 
 ---
 
@@ -510,7 +514,6 @@ Para solventar el problema clásico de "Fallo de Rendezvous" (caída abrupta del
 | LimeSuite | Calibración DC offset y IQ del LimeSDR |
 | PyTorch | Entrenamiento CNN (Google Colab / RTX 4060) |
 | ONNX Runtime | Inferencia en campo (Mini PC Gateway) |
-| pyserial | Control del canal LoRa por USB-CDC |
 | GitHub (privado) | Control de versiones |
 | Notion | Gestión de tareas y wiki |
 | Overleaf | Informes en LaTeX |
