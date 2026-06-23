@@ -75,9 +75,9 @@ El aporte central de este proyecto no es el enlace de radio en sí, sino el **bl
 ### 2.2 Capas del bloque
 
 #### Capa 1 — Adquisición (`RadioInterface`)
-Abstracción del hardware SDR. Expone una API uniforme independientemente de si el SDR subyacente es un bladeRF, LimeSDR u otro. Resuelve internamente las diferencias de driver (`gr-bladeRF` vs `gr-limesdr`), calibración de DC offset, corrección IQ, y configuración de frecuencia/ganancia.
+Abstracción del hardware SDR. Expone una API uniforme independientemente de si el SDR subyacente es un bladeRF, el SDR full-duplex del Cliente (modelo por definir) u otro. Resuelve internamente las diferencias de driver (`gr-bladeRF` vs el driver específico del SDR Cliente elegido), calibración de DC offset, corrección IQ, y configuración de frecuencia/ganancia.
 
-**Parámetros configurables:** frecuencia central, ancho de banda de muestreo, ganancia RX, tipo de hardware (`bladerf` | `limesdr` | `generic`).
+**Parámetros configurables:** frecuencia central, ancho de banda de muestreo, ganancia RX, tipo de hardware (`bladerf` | `cliente_fd` | `generic`).
 
 #### Capa 2 — Sensado espectral (`SpectralSensor`)
 El bladeRF (AD9361) tiene ~56 MHz de ancho de banda instantáneo máximo: es físicamente imposible capturar los 228 MHz de la banda TVWS (470–698 MHz) en una sola FFT. Esta capa orquesta un **barrido de 5 posiciones de sintonización** sobre el RX2 (canal dedicado a sensado, independiente del TX/RX de datos), cada una cubriendo una sub-banda de 56 MHz con 7–9 canales TVWS visibles. Por cada sub-banda capturada calcula la PSD (FFT de 512 puntos, ventana Hann, método Welch) y la entrega normalizada al clasificador CNN. Luego de las 5 capturas, ensambla el mapa global de los 39 canales (ver Capa 3 y §8).
@@ -117,7 +117,7 @@ El bloque cognitivo se valida sobre un enlace punto a punto real **full-duplex**
   [AP WiFi local]
        │
   Orange Pi 5 (16GB)  ←──── OFDM TVWS ────→  Mini PC Core Ultra 5
-  + LimeSDR Mini 2.0                           + bladeRF 2.0 micro xA4
+  + SDR full-duplex (TBD)                       + bladeRF 2.0 micro xA4
   Nodo CLIENTE                                 Nodo GATEWAY
   (demodula, ejecuta)                          (CNN + decisión cognitiva)
        │                                              │
@@ -134,7 +134,7 @@ El bloque cognitivo se valida sobre un enlace punto a punto real **full-duplex**
 
 ### 3.1 Arquitectura full-duplex (actualización de diseño)
 
-El sistema opera en **full-duplex real**, aprovechando la capacidad 2TX/2RX simultáneos del bladeRF 2.0 micro xA4 y la operación dúplex del LimeSDR Mini 2.0. Cada nodo utiliza **dos antenas LPDA dedicadas** —una para TX y otra para RX— eliminando la necesidad de conmutación TDD.
+El sistema opera en **full-duplex real**, aprovechando la capacidad 2TX/2RX simultáneos del bladeRF 2.0 micro xA4 y la operación full-duplex del SDR del Cliente (modelo por definir, ver §4.2). Cada nodo utiliza **dos antenas LPDA dedicadas** —una para TX y otra para RX— eliminando la necesidad de conmutación TDD.
 
 > **Cambio de diseño respecto a versiones anteriores:** Se descartó la arquitectura TDD con conmutador SPDT por dos motivos: (1) la dificultad de aprovisionamiento de conmutadores RF de las especificaciones requeridas en el mercado local, y (2) el full-duplex con antenas dedicadas preserva el throughput simultáneo de ambas direcciones y recupera la pérdida de inserción del conmutador (1.7–2.5 dB), mejorando el margen de enlace en ambos sentidos.
 
@@ -148,7 +148,7 @@ El sistema opera en **full-duplex real**, aprovechando la capacidad 2TX/2RX simu
 
 | Plano | Medio | Dirección | Implementación |
 |---|---|---|---|
-| **Datos** | OFDM 6 MHz, 470–698 MHz | DL y UL (full-duplex) | GNU Radio, bladeRF TX1/RX1 + LimeSDR |
+| **Datos** | OFDM 6 MHz, 470–698 MHz | DL y UL (full-duplex) | GNU Radio, bladeRF TX1/RX1 + SDR Cliente |
 | **Control** | Subportadoras OFDM #254–257 | DL Gateway→Cliente | Opción A in-band, <1 ms latencia |
 | **Sensado** | bladeRF RX2 | Gateway escucha espectro | Canal dedicado, antena discone |
 
@@ -210,7 +210,7 @@ Discone omnidireccional
 
 | Componente | Especificación | Función |
 |---|---|---|
-| SDR | LimeSDR Mini 2.0 (LMS7002M), full-duplex, 12 bits, ±2 ppm | RX datos DL + TX uplink (simultáneos) |
+| SDR | Por definir — full-duplex, ADC 12 bits, ≥30 MSPS (USB 3.0), TCXO ±2 ppm típico | RX datos DL + TX uplink (simultáneos) |
 | SBC | Orange Pi 5, 16 GB RAM, RK3588 (ARM64) | GNU Radio RX/TX, scripts de prueba, monitoreo remoto |
 | LNA RX | 400–1000 MHz, NF ≤1 dB, ganancia 15–25 dB | Bajar NF downlink a ~1 dB efectivo |
 | Antena RX | LPDA 400–2700 MHz, 10 dBi, N-hembra | Recepción downlink (dedicada) |
@@ -218,12 +218,12 @@ Discone omnidireccional
 | Gabinete | IP65 | Protección ambiental en campo |
 | GDT | N-H/N-M, DC–3 GHz, ≤0.3 dB, ≥5 kA (8/20µs), IP67 | Protección de sobretensión por rama RF |
 
-**Limitaciones conocidas del LimeSDR Mini 2.0:**
-- DC offset / LO leakage en subportadora central → calibrar con LimeSuite antes de cada sesión
+**Consideraciones generales para el SDR Cliente (modelo final por definir):**
+- DC offset / LO leakage en subportadora central → calibrar con la herramienta del fabricante antes de cada sesión (procedimiento específico depende del modelo elegido)
 - IQ imbalance → bloque IQ Corrector en GNU Radio (tiempo real)
-- Sin timestamping hardware preciso → ventana de guarda de 10 ms en saltos de canal
-- Driver `gr-limesdr` distinto a `gr-bladeRF` → resuelto por la capa `RadioInterface`
-- GNU Radio en ARM64: requiere compilación desde fuente de `gr-limesdr` (verificado disponible para RK3588)
+- Timestamping hardware: a verificar según el modelo; si no es preciso, mantener ventana de guarda de 10 ms en saltos de canal
+- Driver específico del fabricante (p. ej. `gr-limesdr`, `gr-plutosdr`, según el SDR finalmente seleccionado) distinto a `gr-bladeRF` → resuelto por la capa `RadioInterface`
+- GNU Radio en ARM64: puede requerir compilación desde fuente del driver del SDR elegido (verificar disponibilidad para RK3588)
 
 ---
 
@@ -251,7 +251,7 @@ Discone omnidireccional
 Índice  26–253:  Datos + pilotos dispersos (~228 sub)
 Índice 254–257:  Campo de control in-band (Opción A)
                    #254 → bit 0 del mensaje de control (BPSK)
-                   #255 → EVITADA (DC offset del LimeSDR)
+                   #255 → EVITADA (DC offset / LO leakage del SDR Cliente)
                    #256 → bit 1 del mensaje de control (BPSK)
                    #257 → bit 2 del mensaje de control (BPSK)
 Índice 258–486:  Datos + pilotos dispersos (~229 sub)
@@ -297,11 +297,11 @@ Discone omnidireccional
 ### 6.2 Flujo RX Downlink (en el Cliente)
 
 ```
-[LPDA RX → LNA → LMR-400 → LimeSDR ADC 12 bits]
+[LPDA RX → LNA → LMR-400 → SDR Cliente ADC 12 bits]
     ↓
 [SYNC] Schmidl-Cox: detecta inicio de símbolo, estima CFO
     ↓
-[CORR] DC offset (LimeSuite) + IQ Corrector (GNU Radio)
+[CORR] DC offset (herramienta de calibración del fabricante) + IQ Corrector (GNU Radio)
     ↓
 [FFT]  512 puntos → 512 símbolos complejos en frecuencia
     ↓
@@ -323,7 +323,7 @@ Discone omnidireccional
     ↓
 [OFDM] IFFT 512 + CP 128 (sin campo de control in-band en UL)
     ↓
-[SDR] LimeSDR TX +10 dBm (sin PA)
+[SDR] SDR Cliente TX +10 dBm (sin PA, valor de referencia — ajustar según modelo final)
     ↓
 [RF]  LMR-400 → LPDA TX (dedicada)
     ↓
@@ -333,7 +333,7 @@ Discone omnidireccional
 ### 6.4 Flujo RX Uplink (en el Gateway)
 
 ```
-[LPDA RX → GDT → LNA → LimeSDR RX1]
+[LPDA RX → GDT → LNA → SDR Cliente RX1]
     ↓
 [SYNC + FFT + EQ] — misma cadena que el Cliente en DL
     ↓
@@ -420,7 +420,7 @@ El modelo clasifica **una sub-banda de 56 MHz por inferencia**, no los 39 canale
 | Tamaño modelo ONNX | ~25–30 KB |
 | Inferencia por sub-banda | <1 ms (Core Ultra 5 225, ONNX Runtime CPU) — medido ~0.1 ms |
 | Ciclo de sensado completo | 100–200 ms (5 sub-bandas, RX2 bladeRF, barrido continuo) |
-| Entrenamiento | PyTorch — Google Colab Pro (T4 GPU) |
+| Entrenamiento | PyTorch — local CPU-only (modelo de ~108K parámetros entrena en segundos/época; GPU/Colab no es necesaria a esta escala, queda como opción si el dataset real crece mucho) |
 | Despliegue | `torch.onnx.export()` → ONNX Runtime |
 
 **Por qué dos cabezas:** la Capa 4 (`CognitiveEngine`) soporta una política `max_margin`, pero P(ocupado) cerca de 0 no distingue cuál de varios canales libres está más limpio — todos saturan cerca de 0 por igual. La cabeza de margen, entrenada en paralelo sobre el mismo backbone (costo casi nulo en parámetros), da un valor continuo comparable entre canales libres.
@@ -476,6 +476,22 @@ class ChannelClassifier:
 | Tiempo de inferencia por sub-banda | <2 ms | Core Ultra 5 225, ONNX Runtime CPU — deja amplio margen sobre el ciclo de 100–200 ms |
 | Tamaño ONNX | <500 KB | El diseño con GAP lo logra naturalmente; deja casi todo el presupuesto original de 2–4 MB sin usar |
 | Tiempo de evacuación de canal E2E | <300 ms | Campo real (sensado + CNN + control in-band + guarda) |
+
+### 8.5 Resultados de validación — baseline sobre dataset sintético
+
+Primer entrenamiento completo de extremo a extremo (arquitectura → entrenamiento → ONNX → benchmark), corrido localmente en CPU, 35 épocas sobre 6,000 sub-bandas **sintéticas** (`generar_dataset_sintetico.py`, formato de producción: 9 canales/sub-banda, ambas cabezas etiquetadas):
+
+| Métrica | Resultado |
+|---|---|
+| AUC-ROC global (test) | 0.8815 |
+| F1(β=2) @ umbral de campo 0.20 | 0.8014 |
+| Sensibilidad @ 0.20 (detección de primarios) | 98.5% (38 falsos negativos / 7,746 etiquetas) |
+| Especificidad @ 0.20 | 45.3% |
+| Latencia ONNX Runtime (CPU) | 0.089 ms media, 0.135 ms P99 |
+| Tamaño modelo ONNX | 26.2 KB |
+| Parámetros entrenables | 107,986 |
+
+> **Esto valida el pipeline (arquitectura, entrenamiento dual-head, export ONNX, presupuesto de latencia), no el desempeño en campo.** El dataset sintético modela artefactos plausibles del bladeRF (rolloff, ripple, DC leakage, fuga espectral entre canales) pero no una señal ISDB-Tb real, ni efectos de propagación/terreno, ni el plan de asignación de canales TV real de la zona de despliegue. Estos números son un baseline de referencia para confirmar que el código funciona — la validación real depende de capturar sub-bandas reales con el bladeRF (§12) y, idealmente, hacer fine-tuning o al menos evaluación sobre esos datos antes de tratarlos como cifras de desempeño operativo.
 
 ---
 
@@ -583,13 +599,15 @@ sudo systemctl disable irqbalance
 - Selección de PC Gateway (Core Ultra 5 225) y estrategia de afinidad de CPU para tiempo real
 - Link budget recalculado con la mejora de margen del full-duplex
 - Decisiones de diseño documentadas: eliminación LoRa, full-duplex, LNA GW, Orange Pi 5 como nodo Cliente
+- Implementación del modelo CNN 1D dual-head (`SpectralSenseCNN`) y del pipeline completo: dataset sintético de formato de producción, entrenamiento, export ONNX, `ChannelClassifier`/`SpectralOccupancyMap` de inferencia (ver §8)
+- Entrenamiento y validación end-to-end corridos sobre dataset sintético — baseline de referencia documentado en §8.5
 
 ### 🔄 En progreso / Pendiente inmediato
 
 - Publicación de adquisiciones en portal RNP
-- Captura de dataset espectral TVWS 470–698 MHz (protocolo definido, pendiente ejecución)
-- Entrenamiento y validación del modelo CNN 1D
-- Exportación a ONNX y prueba de inferencia en hardware real
+- Captura de dataset espectral TVWS 470–698 MHz real (protocolo definido, pendiente ejecución) — el modelo solo ha sido validado sobre datos sintéticos (§8.5)
+- Validación/fine-tuning del modelo CNN 1D sobre datos reales una vez capturados
+- Prueba de inferencia ONNX en el hardware de campo real (Core Ultra 5 225)
 
 ### 📋 Pendiente por fase
 
@@ -602,7 +620,7 @@ sudo systemctl disable irqbalance
 
 | # | Aspecto | Original | Actualizado |
 |---|---|---|---|
-| 1 | SDR Cliente | PlutoSDR (USB 2.0) | LimeSDR Mini 2.0 (USB 3.0, ≥30 MSPS) |
+| 1 | SDR Cliente | PlutoSDR (USB 2.0) | SDR full-duplex genérico, USB 3.0, ≥30 MSPS, ADC 12 bits (modelo final por definir) |
 | 2 | Canal de control | LoRa SX1262 (915 MHz, fuera de banda) | Control in-band Opción A + protocolo de refugio |
 | 3 | LNA Gateway | No contemplado | Añadido (NF≤1 dB), margen UL: +0.9→+3.7 dB |
 | 4 | Arquitectura de antena | Full-duplex simultáneo (2 antenas) | **Full-duplex con 4 antenas LPDA dedicadas** (sin conmutador TDD) |
@@ -633,8 +651,8 @@ sudo systemctl disable irqbalance
 | Herramienta | Versión | Uso |
 |---|---|---|
 | GNU Radio | 3.10.x | Demodulación OFDM |
-| gr-limesdr | compilado desde fuente (ARM64) | Driver LimeSDR Mini 2.0 |
-| LimeSuite | última | Calibración DC offset y IQ |
+| Driver del SDR Cliente | compilado desde fuente (ARM64), específico al modelo elegido | Driver GNU Radio del SDR Cliente (p. ej. `gr-limesdr`, `gr-plutosdr`, según selección final) |
+| Herramienta de calibración del fabricante | según modelo elegido | Calibración DC offset e IQ (p. ej. LimeSuite si se selecciona un LimeSDR) |
 | Python | ≥3.10 | Scripts de prueba y monitoreo |
 
 ### Herramientas de desarrollo
