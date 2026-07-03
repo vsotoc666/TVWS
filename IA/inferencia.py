@@ -168,3 +168,36 @@ class SpectralOccupancyMap:
             "libres_por_indice":  sorted(c for c, v in canales.items() if v["libre"]),
             "confianza_global":   confianza,
         }
+
+
+def get_control_payload(occupancy_map: dict) -> tuple[int, list[int]]:
+    """
+    Toma el resultado de obtener_mapa() y genera los payloads (words de 32 bits)
+    necesarios para el protocolo In-Band v2.
+    
+    Returns:
+        tuple(word_formato_a, lista_words_formato_b)
+    """
+    import sys
+    import os
+    # Aseguramos que SDR esté en el path para la importación
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    from SDR.inband_control import InbandPacketBuilder
+    
+    libres = occupancy_map.get("libres_por_indice", [])
+    if not libres:
+        return 0, []
+        
+    mejor_canal = libres[0]
+    
+    # Formato A: Ordenar salto al mejor canal (10 slots de 10ms = 100ms)
+    word_a = InbandPacketBuilder.build_format_a(next_ch=mejor_canal, t_hop=10)
+    
+    # Formato B: Lista de respaldo (Top-4) para Targeted Rendezvous
+    words_b = []
+    for rank, ch in enumerate(libres[:4]):
+        # Mod=0 (BPSK), Power=0 (Normal), Quiet=0 (No silencio)
+        w = InbandPacketBuilder.build_format_b(rank=rank, channel=ch, mod=0, power=0, quiet=0)
+        words_b.append(w)
+        
+    return word_a, words_b
