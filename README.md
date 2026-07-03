@@ -16,7 +16,7 @@
 4. [Hardware por Nodo](#4-hardware-por-nodo)
 5. [Parámetros OFDM del Canal de Datos](#5-parámetros-ofdm-del-canal-de-datos)
 6. [Canal de Datos — TX/RX Downlink y Uplink](#6-canal-de-datos--txrx-downlink-y-uplink)
-7. [Canal de Control In-Band — Opción A](#7-canal-de-control-in-band--opción-a)
+7. [Canal de Control In-Band](#7-canal-de-control-in-band)
 8. [Modelo de IA — CNN de Sensado Espectral](#8-modelo-de-ia--cnn-de-sensado-espectral)
 9. [Link Budget y Parámetros de Rendimiento](#9-link-budget-y-parámetros-de-rendimiento)
 10. [Configuración de Cómputo en Tiempo Real](#10-configuración-de-cómputo-en-tiempo-real)
@@ -61,7 +61,7 @@ El aporte central de este proyecto no es el enlace de radio en sí, sino el **bl
 │  └──────────────┘    └──────────────┘    └────────┬──────────┘  │
 │                                                    │             │
 │  ┌──────────────────────────────────────┐          │             │
-│  │  Capa de Control In-Band (Opción A)  │◀─────────┘             │
+│  │  Capa de Control In-Band (3 formatos) │◀─────────┘             │
 │  │  Subportadoras OFDM #254–257         │                        │
 │  └──────────────────────────────────────┘                        │
 │                                                                  │
@@ -90,14 +90,14 @@ Modelo CNN 1D ejecutado vía ONNX Runtime. Clasifica **una sub-banda de 56 MHz p
 **Parámetros configurables:** ruta del modelo ONNX, umbral de decisión, número de canales por sub-banda, frecuencia de actualización.
 
 #### Capa 4 — Decisión cognitiva (`CognitiveEngine`)
-Implementa la política de selección de canal y el protocolo de salto. Incluye el mecanismo de canal refugio pre-acordado como contingencia ante degradación abrupta del canal de datos.
+Implementa la política de selección de canal y el protocolo de salto. Genera y mantiene actualizada la **Lista de Respaldo Proactiva** (Top 4 canales más limpios según la CNN), que se transmite continuamente al Cliente vía Formato B (ver §7). Ante degradación abrupta, ejecuta el protocolo de **Targeted Rendezvous** (ver §7.4).
 
-**Parámetros configurables:** política de selección (`lowest_free` | `max_margin` | `least_used`), canal(es) de refugio, tiempo de pre-anuncio, número de confirmaciones CRC, umbral de degradación.
+**Parámetros configurables:** política de selección (`lowest_free` | `max_margin` | `least_used`), tamaño de la lista de respaldo (1–4), tiempo de pre-anuncio, número de confirmaciones CRC, umbral de degradación, timeout de rendezvous.
 
 #### Capa 5 — Control in-band (`InbandControlLayer`)
-Implementa la Opción A: inyección del campo de control (next_ch + t_hop + CRC-16) en las subportadoras OFDM #254–257, y su extracción en el receptor. Latencia de señalización <1 ms.
+Implementa la señalización bidireccional in-band mediante 3 formatos de mensaje de 32 bits sobre las subportadoras OFDM #254–257 (BPSK, 3 bits/símbolo, ~1 ms por mensaje). **Formato A** (DL): Salto Inmediato. **Formato B** (DL): Actualización de Respaldo Proactiva con canal, modulación recomendada, flag de potencia y flag de silencio. **Formato C** (UL): ACK del Cliente con métricas RSSI/SNR. Ver §7 para la especificación completa.
 
-**Parámetros configurables:** índices de subportadoras de control, esquema de modulación del campo de control, número de repeticiones del pre-anuncio.
+**Parámetros configurables:** índices de subportadoras de control, esquema de modulación del campo de control, número de repeticiones del pre-anuncio, tamaño de la lista de respaldo.
 
 #### Capa 6 — Interfaz de monitoreo (`MonitoringDashboard`)
 Dashboard en tiempo real que muestra el estado completo del sistema cognitivo. Implementado como interfaz Qt integrada en GNU Radio con opción de servidor WebSocket para monitoreo remoto (relevante para acceso desde laptop externa al nodo Cliente).
@@ -149,10 +149,10 @@ El sistema opera en **full-duplex real**, aprovechando la capacidad 2TX/2RX simu
 | Plano | Medio | Dirección | Implementación |
 |---|---|---|---|
 | **Datos** | OFDM 6 MHz, 470–698 MHz | DL y UL (full-duplex) | GNU Radio, bladeRF TX1/RX1 + SDR Cliente |
-| **Control** | Subportadoras OFDM #254–257 | DL Gateway→Cliente | Opción A in-band, <1 ms latencia |
+| **Control** | Subportadoras OFDM #254–257 | Bidireccional (DL + UL) | In-Band: 3 formatos (Salto, Respaldo Proactivo, ACK Uplink), <1 ms latencia |
 | **Sensado** | bladeRF RX2 | Gateway escucha espectro | Canal dedicado, antena discone |
 
-> **Nota:** El canal de control LoRa (SX1262) fue eliminado del diseño por restricción presupuestal. El control cognitivo opera íntegramente in-band, con protocolo de canal refugio pre-acordado para degradación abrupta.
+> **Nota:** El control cognitivo opera íntegramente in-band. No se utiliza canal de control fuera de banda. La contingencia ante degradación abrupta se resuelve mediante el protocolo de Targeted Rendezvous (ver §7.4).
 
 ### 3.3 Banda de operación
 
@@ -238,7 +238,7 @@ Discone omnidireccional
 | Subportadoras de datos | ~420 | Resto son guardas y pilotos |
 | Subportadoras piloto | ~55 dispersas | Estimación de canal + corrección CFO |
 | Subportadoras de guarda | ~52 (26 por extremo) | Separación espectral con canales vecinos |
-| Subportadoras de control | 3 útiles (#254, #256, #257) | Campo de control in-band — Opción A |
+| Subportadoras de control | 3 útiles (#254, #256, #257) | Campo de control in-band (Formatos A/B/C) |
 | Prefijo cíclico (CP) | 1/4 del símbolo (~56 µs) | Protección contra multipath |
 | Duración símbolo OFDM | ~89 µs (CP + FFT) | 640 muestras a 7.68 MSPS |
 | Modulaciones soportadas | BPSK / QPSK / 16-QAM | Selección adaptativa por CNN |
@@ -249,7 +249,7 @@ Discone omnidireccional
 ```
 Índice   0–25:   Banda de guarda inferior (26 sub → 0+0j)
 Índice  26–253:  Datos + pilotos dispersos (~228 sub)
-Índice 254–257:  Campo de control in-band (Opción A)
+Índice 254–257:  Campo de control in-band (Formatos A/B/C, ver §7)
                    #254 → bit 0 del mensaje de control (BPSK)
                    #255 → EVITADA (DC offset / LO leakage del SDR Cliente)
                    #256 → bit 1 del mensaje de control (BPSK)
@@ -321,7 +321,7 @@ Discone omnidireccional
     ↓
 [MAC + FEC + BPSK] — modulación forzada (margen ajustado en UL)
     ↓
-[OFDM] IFFT 512 + CP 128 (sin campo de control in-band en UL)
+[OFDM] IFFT 512 + CP 128 (incluye campo de control in-band Formato C: ACK + RSSI + SNR)
     ↓
 [SDR] SDR Cliente TX +10 dBm (sin PA, valor de referencia — ajustar según modelo final)
     ↓
@@ -344,63 +344,105 @@ Discone omnidireccional
 
 ---
 
-## 7. Canal de Control In-Band — Opción A
+## 7. Canal de Control In-Band
 
-### 7.1 Principio
+El sistema opera control bidireccional **íntegramente in-band**, embebido en las subportadoras OFDM #254, #256 y #257 (BPSK, evadiendo la fuga DC en #255). No requiere hardware adicional ni canal fuera de banda. Capacidad: **3 bits por símbolo OFDM**.
 
-El campo de control viaja **embebido en cada símbolo OFDM** usando 3 subportadoras dedicadas (#254, #256, #257). No requiere hardware adicional ni canal fuera de banda. Latencia de entrega: <1 ms.
+Los mensajes de control son de **32 bits (4 bytes)**, fragmentados a lo largo de **11 símbolos OFDM** consecutivos (~1 ms). Se definen tres formatos según el tipo de instrucción.
 
-### 7.2 Estructura del mensaje de control
+### 7.1 Formato A — Salto Inmediato (Gateway → Cliente)
 
-```
-Mensaje de 32 bits, transmitido en 11 símbolos OFDM consecutivos (3 bits/símbolo):
+Se usa cuando la CNN predice degradación gradual del canal y hay tiempo de evacuar ordenadamente.
 
-Bits  0–5:   next_ch    — índice del canal TVWS destino (0–38, 6 bits)
-Bits  6–13:  t_hop      — tiempo hasta el salto en slots de 10 ms (8 bits)
-Bits 14–15:  flags      — 00=normal, 01=refugio, 10=resync, 11=reservado
-Bits 16–31:  CRC-16     — checksum de bits 0–15
+| Campo | Bits | Descripción |
+|---|---|---|
+| `Flag_Type` | 2 | `00` — Identifica este formato |
+| `next_ch` | 6 | ID del canal TVWS destino (0–38) |
+| `t_hop` | 8 | Tiempo hasta el salto (en slots de 10 ms) |
+| **CRC-16** | 16 | Detección de errores (checksum de bits 0–15) |
+| **Total** | **32** | |
 
-Tiempo de transmisión completa: 11 × 89 µs ≈ 0.98 ms
-Repetición: cada símbolo OFDM durante el período de pre-anuncio (10–20 tramas ≈ 100–200 ms)
-```
+### 7.2 Formato B — Actualización de Respaldo Proactiva (Gateway → Cliente)
 
-### 7.3 TX del campo de control (Gateway)
+Se transmite **continuamente** durante el periodo de enlace estable (horas/días). El Gateway actualiza al Cliente con los mejores canales de respaldo, uno a la vez, incluyendo instrucciones precisas de comportamiento al aterrizar.
+
+| Campo | Bits | Descripción |
+|---|---|---|
+| `Flag_Type` | 2 | `01` — Identifica este formato |
+| `Rank_ID` | 2 | Posición en la lista de respaldo (0 a 3) |
+| `Channel_ID` | 6 | Canal TVWS asignado a esa posición |
+| `Mod_Scheme` | 2 | Modulación recomendada al llegar (`00`=BPSK, `01`=QPSK, `10`=16QAM, `11`=reservado) |
+| `Power_Flag` | 1 | `1`= Reducir ganancia TX si canal adyacente a TV activo (mitigación OOBE) |
+| `Quiet_Flag` | 1 | `1`= Guardar silencio 10 ms al aterrizar para que la CNN re-confirme el canal |
+| `Reservado` | 2 | Bits reservados para expansión futura |
+| **CRC-16** | 16 | Detección de errores (checksum de bits 0–15) |
+| **Total** | **32** | |
+
+> **Nota sobre `Power_Flag`:** El Cliente no posee PA externo; la reducción de potencia se aplica directamente sobre la ganancia de transmisión (TX gain) del SDR vía software.
+
+### 7.3 Formato C — ACK y Métricas Uplink (Cliente → Gateway)
+
+El Cliente usa sus subportadoras in-band en el uplink para confirmar comandos y reportar la salud del enlace.
+
+| Campo | Bits | Descripción |
+|---|---|---|
+| `Flag_Type` | 2 | `10` — Identifica este formato |
+| `ACK_Type` | 2 | `00`=Respaldo recibido, `01`=Salto completado, `10`=Heartbeat, `11`=Reservado |
+| `Rank_ACK` | 2 | Posición de respaldo que se confirma (si aplica) |
+| `RSSI_rx` | 5 | Nivel de señal recibida (mapeado de −100 a −68 dBm, paso 1 dB) |
+| `SNR_rx` | 5 | Relación señal a ruido (mapeado de 0 a 31 dB) |
+| **CRC-16** | 16 | Detección de errores (checksum de bits 0–15) |
+| **Total** | **32** | |
+
+### 7.4 Protocolo de Targeted Rendezvous (contingencia ante caída abrupta)
+
+El sistema reemplaza el enfoque de "canal refugio fijo" por un mecanismo dinámico de **Targeted Rendezvous**, que explota la asimetría Gateway inteligente / Cliente ciego para minimizar el tiempo de reconexión.
+
+**Durante el periodo estable:** El Gateway transmite continuamente mensajes Formato B, manteniendo en el Cliente una lista actualizada de los mejores canales de respaldo (Top 4), ordenados por calidad según la CNN.
+
+**Cuando el enlace colapsa abruptamente:**
+
+1. **Gateway (inteligente):**
+   - Detecta la caída (ausencia de ACKs Formato C en el uplink).
+   - Consulta la lista Top 4 compartida con el Cliente.
+   - La CNN verifica instantáneamente cuáles de esos canales siguen libres.
+   - Salta al primer canal disponible de la lista y emite balizas de sincronización OFDM (preámbulo Schmidl-Cox repetido).
+
+2. **Cliente (ciego):**
+   - Al expirar su timeout de recepción, inicia la secuencia de contingencia.
+   - **No barre los 39 canales al azar.** Salta exclusivamente siguiendo el orden de la lista de respaldo pre-acordada.
+   - Se detiene ~20 ms en cada canal, buscando el preámbulo del Gateway.
+   - Al encontrar la baliza, configura los parámetros asociados (modulación, potencia) y el enlace se restaura.
+
+**Time-to-Rendezvous (TTR):** Con una lista de 4 canales y 20 ms por canal, el peor caso es **80 ms** — imperceptible para capas superiores (TCP/IP).
+
+### 7.5 Robustez del campo de control
+
+Con PER del 10% y pre-anuncio de 20 repeticiones: P(fallo total) = 0.1²⁰ ≈ 10⁻²⁰. El campo de control es prácticamente irrompible mientras el canal de datos sea demodulable. El CRC-16 detecta el 100% de ráfagas de error ≤16 bits y el 99.998% de ráfagas mayores.
+
+### 7.6 Pseudocódigo de referencia
 
 ```python
-# Pseudocódigo — implementación en GNU Radio Python Block
-def build_control_packet(next_ch, t_hop, flag=0b00):
-    payload = (next_ch & 0x3F) | ((t_hop & 0xFF) << 6) | ((flag & 0x3) << 14)
+# --- Gateway: construcción de paquetes ---
+def build_format_a(next_ch, t_hop):
+    payload = (0b00) | ((next_ch & 0x3F) << 2) | ((t_hop & 0xFF) << 8)
     crc = crc16(payload.to_bytes(2, 'big'))
-    return payload | (crc << 16)  # 32 bits totales
+    return payload | (crc << 16)
 
-# Tagged Stream Mux inyecta los bits en sub #254, #256, #257
-# antes del OFDM Carrier Allocator en el flowgraph del Gateway
+def build_format_b(rank, channel, mod, power, quiet):
+    payload = (0b01) | ((rank & 0x3) << 2) | ((channel & 0x3F) << 4)
+    payload |= ((mod & 0x3) << 10) | ((power & 0x1) << 12) | ((quiet & 0x1) << 13)
+    # bits 14-15: reservados (0)
+    crc = crc16(payload.to_bytes(2, 'big'))
+    return payload | (crc << 16)
+
+# --- Cliente: construcción de ACK ---
+def build_format_c(ack_type, rank_ack, rssi, snr):
+    payload = (0b10) | ((ack_type & 0x3) << 2) | ((rank_ack & 0x3) << 4)
+    payload |= ((rssi & 0x1F) << 6) | ((snr & 0x1F) << 11)
+    crc = crc16(payload.to_bytes(2, 'big'))
+    return payload | (crc << 16)
 ```
-
-### 7.4 RX del campo de control (Cliente)
-
-```python
-# Pseudocódigo — implementación en GNU Radio Python Block
-def process_control_symbol(sub254, sub256, sub257):
-    bits = [decode_bpsk(sub254), decode_bpsk(sub256), decode_bpsk(sub257)]
-    buffer.append(bits)
-    if len(buffer) == 11:  # mensaje completo
-        word = bits_to_uint32(buffer)
-        if verify_crc16(word):
-            next_ch = word & 0x3F
-            t_hop   = (word >> 6) & 0xFF
-            flag    = (word >> 14) & 0x3
-            schedule_hop(next_ch, t_hop * 10e-3)
-        buffer.clear()
-```
-
-### 7.5 Robustez
-
-Con PER del 10% y pre-anuncio de 20 repeticiones: P(fallo total) = 0.1²⁰ ≈ 10⁻²⁰. El campo de control es prácticamente irrompible mientras el canal de datos sea demodulable.
-
-### 7.6 Protocolo de canal refugio (contingencia)
-
-Si el SNR del canal activo cae por debajo de un umbral configurable, ambos nodos saltan de forma autónoma al canal de refugio pre-acordado (por defecto: canal más bajo de la banda, 470 MHz, mejor difracción NLOS). No requiere coordinación explícita porque el destino está pre-acordado en el firmware de ambos nodos.
 
 ---
 
@@ -592,13 +634,13 @@ sudo systemctl disable irqbalance
 ### ✅ Completado
 
 - Arquitectura completa del bloque cognitivo GNU Radio (todas las capas)
-- Diseño del esquema de control in-band Opción A (subportadoras #254–257)
-- Protocolo de canal refugio pre-acordado como contingencia
+- Diseño del esquema de control in-band con 3 formatos (A: Salto, B: Respaldo Proactivo, C: ACK Uplink)
+- Protocolo de Targeted Rendezvous como contingencia (reemplaza canal refugio fijo)
 - Especificación técnica completa de hardware (ambos nodos)
 - Decisión de arquitectura full-duplex con 4 antenas LPDA (eliminación de conmutadores SPDT)
 - Selección de PC Gateway (Core Ultra 5 225) y estrategia de afinidad de CPU para tiempo real
 - Link budget recalculado con la mejora de margen del full-duplex
-- Decisiones de diseño documentadas: eliminación LoRa, full-duplex, LNA GW, Orange Pi 5 como nodo Cliente
+- Decisiones de diseño documentadas: eliminación canal fuera de banda, full-duplex, LNA GW, Orange Pi 5 como nodo Cliente
 - Implementación del modelo CNN 1D dual-head (`SpectralSenseCNN`) y del pipeline completo: dataset sintético de formato de producción, entrenamiento, export ONNX, `ChannelClassifier`/`SpectralOccupancyMap` de inferencia (ver §8)
 - Entrenamiento y validación end-to-end corridos sobre dataset sintético — baseline de referencia documentado en §8.5
 
@@ -621,7 +663,7 @@ sudo systemctl disable irqbalance
 | # | Aspecto | Original | Actualizado |
 |---|---|---|---|
 | 1 | SDR Cliente | PlutoSDR (USB 2.0) | SDR full-duplex genérico, USB 3.0, ≥30 MSPS, ADC 12 bits (modelo final por definir) |
-| 2 | Canal de control | LoRa SX1262 (915 MHz, fuera de banda) | Control in-band Opción A + protocolo de refugio |
+| 2 | Canal de control | LoRa SX1262 (915 MHz, fuera de banda) | Control in-band bidireccional (3 formatos) + Targeted Rendezvous |
 | 3 | LNA Gateway | No contemplado | Añadido (NF≤1 dB), margen UL: +0.9→+3.7 dB |
 | 4 | Arquitectura de antena | Full-duplex simultáneo (2 antenas) | **Full-duplex con 4 antenas LPDA dedicadas** (sin conmutador TDD) |
 | 5 | PC Cliente | Mini PC Intel N100 | Orange Pi 5 16 GB (hardware del equipo, ARM64) |
