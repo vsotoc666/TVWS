@@ -1,0 +1,6 @@
+[OK] el dump tiene un numero entero de paquetes de 896 simbolos
+[OK] al menos 1 paquete capturado (hubo 9)
+[OK] cantidad de tags (9) coincide con cantidad de paquetes (9)
+[OK] los 9 paquetes coinciden EXACTO (valor a valor) con los simbolos esperados
+
+TODO CORRECTO

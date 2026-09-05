@@ -1,0 +1,11 @@
+tuntap_pdu :error: failed to set MTU to 1500. You should use ifconfig to set the MTU. E.g., `$ sudo ifconfig tun0 mtu 1500`
+tuntap_pdu :warning: Allocated virtual ethernet interface: tun0
+You must now use ifconfig to set its IP address. E.g.,
+  $ sudo ifconfig tun0 192.168.200.1
+Be sure to use a different address in the same subnet for each machine.
+
+[prueba12] flowgraph arrancado, escuchando 'tun0' durante 15.0s...
+[prueba12] en otra terminal corre: ping -I tun0 -c 4 10.99.0.2
+[prueba12] resumen: {'n_entregados': 4, 'n_descartados': 0, 'n_total': 4, 'bytes_entregados': 336, 'latencia_prom_ms': 5.394038002123125, 'latencia_max_ms': 7.880582008510828}
+[prueba12] throughput aprox (solo computo, sin contar espera entre paquetes): 0.125 Mbps
+[prueba12] 4 payloads volcados a payloads_entregados.txt

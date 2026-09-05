@@ -1,0 +1,18 @@
+[OK] round-trip payload realista (paquete UDP/IP de la Prueba 3)
+[OK] round-trip payload vacio
+[OK] round-trip con seq_num=255 y frag_flags=MF (limites del campo de 1 byte)
+[OK] overhead de framing es exactamente 5 bytes (3 header + 2 CRC)
+[OK] CRC detecta 1 byte corrupto en el payload
+[OK] CRC detecta 1 bit corrupto en el header (seq_num)
+[OK] frame truncado rechazado con MACFrameError (no crashea)
+[OK] mod_scheme invalido rechazado por encapsular() (ValueError)
+[OK] frag_flags_mf()/frag_flags_tiene_mf() codifican/leen el bit MF correctamente
+[OK] payload que cabe en 1 fragmento produce 1 solo frame (MF=0), identico a encapsular() directo
+[OK] 1400B con max 100B/fragmento produce 14 fragmentos
+[OK] MF=1 en todos los fragmentos salvo el ultimo (MF=0)
+[OK] reensamblar(fragmentar(payload)) == payload original, bit exacto
+[OK] fragmento corrupto en reensamblar() lanza MACFrameError (descarta el PDU)
+[OK] seq_num inconsistente entre fragmentos lanza MACFrameError
+[OK] payload vacio produce exactamente 1 fragmento (MF=0) y reensambla a vacio
+
+14/14 casos aprobados

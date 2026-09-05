@@ -1,0 +1,10 @@
+[prueba10] 896 simbolos BPSK de entrada (Prueba 9)
+[prueba10] repartidos en 2 simbolos OFDM (457 datos c/u)
+[OK] guardas (indices 0-25 y 487-511) en cero en los 2 simbolos OFDM
+[OK] subportadoras de control (#254/#256/#257=BPSK del mensaje, #255 evitada=0) en su indice
+[OK] simbolos de datos ubicados exacto en los slots de datos (sin pisar guardas/control)
+[OK] cada simbolo OFDM con CP mide 512+128=640 muestras
+[OK] el CP es copia exacta de la cola del simbolo IFFT (no solo la longitud)
+[OK] round-trip (quitar CP + FFT) recupera el vector de frecuencia original
+
+6/6 casos aprobados

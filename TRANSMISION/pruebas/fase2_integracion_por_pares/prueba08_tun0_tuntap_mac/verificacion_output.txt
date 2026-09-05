@@ -1,0 +1,31 @@
+[OK] al menos 1 frame capturado en frames_mac.txt
+[OK] frame 0: CRC valido
+[OK] frame 0: seq_num=0 consecutivo (esperado 0)
+[OK] frame 0: next_ch=3 (esperado 3)
+[OK] frame 0: mod_scheme=1 (esperado 1)
+[OK] frame 0: payload es IPv4 (version=4)
+[OK] frame 0: protocolo ICMP (1)
+[OK] frame 0: IP origen = tun0 (10.99.0.1)
+[OK] frame 1: CRC valido
+[OK] frame 1: seq_num=1 consecutivo (esperado 1)
+[OK] frame 1: next_ch=3 (esperado 3)
+[OK] frame 1: mod_scheme=1 (esperado 1)
+[OK] frame 1: payload es IPv4 (version=4)
+[OK] frame 1: protocolo ICMP (1)
+[OK] frame 1: IP origen = tun0 (10.99.0.1)
+[OK] frame 2: CRC valido
+[OK] frame 2: seq_num=2 consecutivo (esperado 2)
+[OK] frame 2: next_ch=3 (esperado 3)
+[OK] frame 2: mod_scheme=1 (esperado 1)
+[OK] frame 2: payload es IPv4 (version=4)
+[OK] frame 2: protocolo ICMP (1)
+[OK] frame 2: IP origen = tun0 (10.99.0.1)
+[OK] frame 3: CRC valido
+[OK] frame 3: seq_num=3 consecutivo (esperado 3)
+[OK] frame 3: next_ch=3 (esperado 3)
+[OK] frame 3: mod_scheme=1 (esperado 1)
+[OK] frame 3: payload es IPv4 (version=4)
+[OK] frame 3: protocolo ICMP (1)
+[OK] frame 3: IP origen = tun0 (10.99.0.1)
+
+TODOS los frames validos

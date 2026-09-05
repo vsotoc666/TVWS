@@ -1,0 +1,20 @@
+[OK] patron perfora 2 de cada 6 bits (mantiene 4/6) -> tasa 3/4
+[OK] round-trip perforado (3/4) bit-exacto sin errores de canal (payload de la Prueba 3)
+[OK] round-trip perforado (3/4) bit-exacto sin errores de canal (payload grande, 2000B)
+
+--- Curva BER de canal -> BER post-decode: tasa 1/2 vs tasa 3/4 ---
+BER canal= 0.00  R=1/2: flips=    0/32064 -> post-decode=0.00000  |  R=3/4: flips=    0/21376 -> post-decode=0.00000
+BER canal= 0.01  R=1/2: flips=  321/32064 -> post-decode=0.00000  |  R=3/4: flips=  214/21376 -> post-decode=0.00781
+BER canal= 0.03  R=1/2: flips=  962/32064 -> post-decode=0.00000  |  R=3/4: flips=  641/21376 -> post-decode=0.08150
+BER canal= 0.05  R=1/2: flips= 1603/32064 -> post-decode=0.00206  |  R=3/4: flips= 1069/21376 -> post-decode=0.21831
+BER canal= 0.07  R=1/2: flips= 2244/32064 -> post-decode=0.01725  |  R=3/4: flips= 1496/21376 -> post-decode=0.30906
+BER canal= 0.08  R=1/2: flips= 2565/32064 -> post-decode=0.03537  |  R=3/4: flips= 1710/21376 -> post-decode=0.36219
+BER canal= 0.09  R=1/2: flips= 2886/32064 -> post-decode=0.06344  |  R=3/4: flips= 1924/21376 -> post-decode=0.38550
+BER canal= 0.10  R=1/2: flips= 3206/32064 -> post-decode=0.10856  |  R=3/4: flips= 2138/21376 -> post-decode=0.42238
+BER canal= 0.11  R=1/2: flips= 3527/32064 -> post-decode=0.14238  |  R=3/4: flips= 2351/21376 -> post-decode=0.43619
+BER canal= 0.12  R=1/2: flips= 3848/32064 -> post-decode=0.20237  |  R=3/4: flips= 2565/21376 -> post-decode=0.45044
+BER canal= 0.15  R=1/2: flips= 4810/32064 -> post-decode=0.34294  |  R=3/4: flips= 3206/21376 -> post-decode=0.48050
+BER canal= 0.20  R=1/2: flips= 6413/32064 -> post-decode=0.46069  |  R=3/4: flips= 4275/21376 -> post-decode=0.49281
+[OK] R=3/4 nunca corrige mejor que R=1/2, y es mediblemente peor en al menos un punto de la curva (coding-gain trade-off esperado)
+
+4/4 casos aprobados

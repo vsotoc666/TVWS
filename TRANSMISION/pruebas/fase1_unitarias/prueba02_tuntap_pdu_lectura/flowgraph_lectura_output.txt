@@ -1,0 +1,57 @@
+tuntap_pdu :error: failed to set MTU to 1500. You should use ifconfig to set the MTU. E.g., `$ sudo ifconfig tun0 mtu 1500`
+tuntap_pdu :warning: Allocated virtual ethernet interface: tun0
+You must now use ifconfig to set its IP address. E.g.,
+  $ sudo ifconfig tun0 192.168.200.1
+Be sure to use a different address in the same subnet for each machine.
+
+message_debug :info: The `print_pdu` port is deprecated and will be removed; forwarding to `print`.
+***** VERBOSE PDU DEBUG PRINT ******
+()
+pdu length = 84 bytes
+pdu vector contents = 
+0000: 45 00 00 54 ce 50 40 00 40 01 57 90 0a 63 00 01 
+0010: 0a 63 00 02 08 00 fb 7c 00 02 00 01 3f 9e 62 6a 
+0020: 00 00 00 00 8f a4 0c 00 00 00 00 00 10 11 12 13 
+0030: 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20 21 22 23 
+0040: 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f 30 31 32 33 
+0050: 34 35 36 37 
+************************************
+message_debug :info: The `print_pdu` port is deprecated and will be removed; forwarding to `print`.
+***** VERBOSE PDU DEBUG PRINT ******
+()
+pdu length = 84 bytes
+pdu vector contents = 
+0000: 45 00 00 54 d0 17 40 00 40 01 55 c9 0a 63 00 01 
+0010: 0a 63 00 02 08 00 68 dd 00 02 00 02 40 9e 62 6a 
+0020: 00 00 00 00 20 43 0d 00 00 00 00 00 10 11 12 13 
+0030: 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20 21 22 23 
+0040: 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f 30 31 32 33 
+0050: 34 35 36 37 
+************************************
+message_debug :info: The `print_pdu` port is deprecated and will be removed; forwarding to `print`.
+***** VERBOSE PDU DEBUG PRINT ******
+()
+pdu length = 84 bytes
+pdu vector contents = 
+0000: 45 00 00 54 d1 ba 40 00 40 01 54 26 0a 63 00 01 
+0010: 0a 63 00 02 08 00 91 82 00 02 00 03 41 9e 62 6a 
+0020: 00 00 00 00 f6 9c 0d 00 00 00 00 00 10 11 12 13 
+0030: 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20 21 22 23 
+0040: 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f 30 31 32 33 
+0050: 34 35 36 37 
+************************************
+message_debug :info: The `print_pdu` port is deprecated and will be removed; forwarding to `print`.
+[prueba02] flowgraph arrancado, escuchando 'tun0' durante 12.0s...
+[prueba02] en otra terminal corre: ping -I tun0 -c 4 10.99.0.2
+[prueba02] flowgraph detenido
+***** VERBOSE PDU DEBUG PRINT ******
+()
+pdu length = 84 bytes
+pdu vector contents = 
+0000: 45 00 00 54 d4 48 40 00 40 01 51 98 0a 63 00 01 
+0010: 0a 63 00 02 08 00 e0 22 00 02 00 04 42 9e 62 6a 
+0020: 00 00 00 00 a6 fb 0d 00 00 00 00 00 10 11 12 13 
+0030: 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20 21 22 23 
+0040: 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f 30 31 32 33 
+0050: 34 35 36 37 
+************************************

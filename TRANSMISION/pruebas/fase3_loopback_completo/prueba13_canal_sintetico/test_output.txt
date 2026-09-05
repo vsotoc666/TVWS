@@ -1,0 +1,7 @@
+[OK] BER canal=0% (flips=0): corrige por completo, payload identico
+[OK] BER canal=1% (flips=9): corrige por completo, payload identico
+[OK] BER canal=3% (flips=27): corrige por completo, payload identico
+[OK] BER canal=20% (flips=?): NO corrige -- se descarta (MACFrameError), no cuela payload corrupto
+[OK] en 20 corridas a BER=25%, ningun CRC valido escondio un payload incorrecto (0 falsos positivos)
+
+5/5 casos aprobados

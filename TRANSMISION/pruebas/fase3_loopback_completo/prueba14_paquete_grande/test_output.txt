@@ -1,0 +1,17 @@
+[prueba14] payload de prueba: 1400 bytes
+[prueba14] capacidad de un simbolo OFDM: 457 bits codificados
+[prueba14] presupuesto de slot TDD: 20 simbolos (~1.78 ms), umbral de corte usado: 18 simbolos
+[prueba14] max bytes de payload IP por fragmento (a 18 simbolos, BPSK R=1/2): 505
+[OK] [contraste] frame monolitico de 1400B sigue ocupando 50 simbolos (>1 slot, como antes)
+[OK] [contraste] frame monolitico sigue recuperando el payload bit-exacto (la capa OFDM no tiene limite propio)
+[prueba14] 3 fragmentos generados para 1400B
+[OK] se generó más de 1 fragmento (3)
+[prueba14]   fragmento 0: 510B de frame MAC -> 18 simbolos OFDM (cabe en 20)
+[prueba14]   fragmento 1: 510B de frame MAC -> 18 simbolos OFDM (cabe en 20)
+[prueba14]   fragmento 2: 395B de frame MAC -> 14 simbolos OFDM (cabe en 20)
+[OK] los 3 fragmentos caben cada uno en <= 20 simbolos (1 slot TDD)
+[OK] reensamblar() sobre los fragmentos recuperados por TX+RX == payload original, bit exacto
+
+5/5 casos aprobados
+
+[hallazgo] Con el framing TDD decidido (slot de 20 simbolos OFDM, claudedocs/arquitectura_enlace_datos.md S2.1), un frame MAC monolitico de 1400B (50 simbolos) YA NO cabe en un slot. La fragmentacion via mac_frame.fragmentar()/reensamblar() (S2.4: seq_num como ID de PDU + bit MF en frag_flags) resuelve esto: fragmentando a un maximo de 505 bytes de payload por fragmento (umbral de 18 simbolos, con margen bajo el presupuesto completo del slot), cada fragmento del paquete de 1400B cabe en su slot y el PDU se reensambla bit-exacto en el receptor.

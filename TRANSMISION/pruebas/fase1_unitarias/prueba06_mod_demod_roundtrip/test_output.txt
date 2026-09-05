@@ -1,0 +1,11 @@
+[OK] BPSK: round-trip exhaustivo de los 2 simbolos posibles
+[OK] BPSK: round-trip de 200 bits aleatorios (payload simulado)
+[OK] QPSK: round-trip exhaustivo de los 4 simbolos posibles
+[OK] QPSK: round-trip de 200 bits aleatorios (payload simulado)
+[OK] 16-QAM: round-trip exhaustivo de los 16 simbolos posibles
+[OK] 16-QAM: round-trip de 200 bits aleatorios (payload simulado)
+[OK] BPSK: 2 puntos, ambos de magnitud 1, en antifase (180 grados)
+[OK] QPSK: 4 puntos, todos con la misma magnitud (modulo constante)
+[OK] 16-QAM: 16 puntos en grilla 4x4 (4 niveles I x 4 niveles Q), simetrica respecto al origen
+
+9/9 casos aprobados

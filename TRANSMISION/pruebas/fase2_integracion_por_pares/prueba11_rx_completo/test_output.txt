@@ -1,0 +1,10 @@
+[prueba11] TX: 2 simbolos OFDM generados (Pruebas 9-10)
+[prueba11] RX: frame MAC recuperado (52 bytes)
+[OK] frame MAC recuperado == frame MAC original (bit exacto)
+[OK] control recuperado == (1, 0, 1) en los 2 simbolos OFDM
+[OK] mac_frame.decapsular(): CRC valido
+[OK] payload recuperado == paquete original (47 bytes)
+[OK] seq_num recuperado == 9
+[OK] frag_flags recuperado == 0
+
+6/6 casos aprobados

@@ -1,0 +1,6 @@
+[OK] PDU->stream: 7 paquetes consecutivos, tags y datos correctos en cada limite
+[OK] stream->PDU: un paquete de longitud conocida reconstruido exacto
+[OK] stream->PDU: 3 paquetes de longitud variable reconstruidos exactos, sin mezclar limites
+[OK] round-trip completo PDU->stream->PDU: 7 paquetes, todos exactos
+
+4/4 casos aprobados

@@ -1,0 +1,12 @@
+[prueba15] desglose de tiempo por etapa (5 repeticiones, payload de 100B):
+  mac_encap                   :   0.057 ms/paquete
+  fec_codificar               :   0.587 ms/paquete
+  mod_ofdm_tx                 :   0.547 ms/paquete
+  ofdm_rx_y_fec_decodificar   :   1.069 ms/paquete
+  mac_decap                   :   0.061 ms/paquete
+
+[prueba15] midiendo throughput sostenido: 30 paquetes de 500 bytes, BPSK R=1/2...
+[prueba15] 15000 bytes entregados correctos en 0.179 s
+[prueba15] throughput medido: 0.6701 Mbps
+[prueba15] objetivo README S5.3 (BPSK R=1/2): 1.9 Mbps
+[prueba15] razon medido/objetivo: 0.3527x

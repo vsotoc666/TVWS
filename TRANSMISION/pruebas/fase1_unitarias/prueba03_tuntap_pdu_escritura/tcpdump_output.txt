@@ -1,0 +1,38 @@
+victors@fiee-god:~/Desktop/VRI/TVWS$ sudo tcpdump -i tun0 -n -vv -X -c 5
+tcpdump: listening on tun0, link-type RAW (Raw IP), snapshot length 262144 bytes
+20:26:29.038313 IP (tos 0x0, ttl 64, id 49374, offset 0, flags [none], proto UDP (17), length 47)
+    10.99.0.2.40000 > 10.99.0.1.9: [no cksum] UDP, length 19
+    0x0000:  4500 002f c0de 0000 4011 a517 0a63 0002  E../....@....c..
+    0x0010:  0a63 0001 9c40 0009 001b 0000 5052 5545  .c...@......PRUE
+    0x0020:  4241 332d 5456 5753 2d49 4e42 414e 44    BA3-TVWS-INBAND
+20:26:29.038354 IP (tos 0xc0, ttl 64, id 2885, offset 0, flags [none], proto ICMP (1), length 75)
+    10.99.0.1 > 10.99.0.2: ICMP 10.99.0.1 udp port 9 unreachable, length 55
+    IP (tos 0x0, ttl 64, id 49374, offset 0, flags [none], proto UDP (17), length 47)
+    10.99.0.2.40000 > 10.99.0.1.9: [no cksum] UDP, length 19
+    0x0000:  45c0 004b 0b45 0000 4001 59e5 0a63 0001  E..K.E..@.Y..c..
+    0x0010:  0a63 0002 0303 990e 0000 0000 4500 002f  .c..........E../
+    0x0020:  c0de 0000 4011 a517 0a63 0002 0a63 0001  ....@....c...c..
+    0x0030:  9c40 0009 001b 0000 5052 5545 4241 332d  .@......PRUEBA3-
+    0x0040:  5456 5753 2d49 4e42 414e 44              TVWS-INBAND
+20:26:32.038342 IP (tos 0x0, ttl 64, id 49374, offset 0, flags [none], proto UDP (17), length 47)
+    10.99.0.2.40000 > 10.99.0.1.9: [no cksum] UDP, length 19
+    0x0000:  4500 002f c0de 0000 4011 a517 0a63 0002  E../....@....c..
+    0x0010:  0a63 0001 9c40 0009 001b 0000 5052 5545  .c...@......PRUE
+    0x0020:  4241 332d 5456 5753 2d49 4e42 414e 44    BA3-TVWS-INBAND
+20:26:32.038375 IP (tos 0xc0, ttl 64, id 4235, offset 0, flags [none], proto ICMP (1), length 75)
+    10.99.0.1 > 10.99.0.2: ICMP 10.99.0.1 udp port 9 unreachable, length 55
+    IP (tos 0x0, ttl 64, id 49374, offset 0, flags [none], proto UDP (17), length 47)
+    10.99.0.2.40000 > 10.99.0.1.9: [no cksum] UDP, length 19
+    0x0000:  45c0 004b 108b 0000 4001 549f 0a63 0001  E..K....@.T..c..
+    0x0010:  0a63 0002 0303 990e 0000 0000 4500 002f  .c..........E../
+    0x0020:  c0de 0000 4011 a517 0a63 0002 0a63 0001  ....@....c...c..
+    0x0030:  9c40 0009 001b 0000 5052 5545 4241 332d  .@......PRUEBA3-
+    0x0040:  5456 5753 2d49 4e42 414e 44              TVWS-INBAND
+20:26:35.038727 IP (tos 0x0, ttl 64, id 49374, offset 0, flags [none], proto UDP (17), length 47)
+    10.99.0.2.40000 > 10.99.0.1.9: [no cksum] UDP, length 19
+    0x0000:  4500 002f c0de 0000 4011 a517 0a63 0002  E../....@....c..
+    0x0010:  0a63 0001 9c40 0009 001b 0000 5052 5545  .c...@......PRUE
+    0x0020:  4241 332d 5456 5753 2d49 4e42 414e 44    BA3-TVWS-INBAND
+5 packets captured
+6 packets received by filter
+0 packets dropped by kernel

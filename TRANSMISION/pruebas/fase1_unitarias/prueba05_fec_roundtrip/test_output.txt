@@ -1,0 +1,20 @@
+[OK] round-trip sin errores de canal (payload de la Prueba 3)
+[OK] corrige por completo BER de canal=1% (321 bits volteados de 32064)
+[OK] corrige por completo BER de canal=3% (962 bits volteados de 32064)
+[OK] NO corrige BER de canal=20% (BER residual=47.2%, esperado > 20%)
+
+--- Caracterizacion (BER canal -> BER post-decode) ---
+BER canal= 0.00 (flips=    0/32064)  ->  BER post-decode=0.00000
+BER canal= 0.01 (flips=  321/32064)  ->  BER post-decode=0.00000
+BER canal= 0.03 (flips=  962/32064)  ->  BER post-decode=0.00000
+BER canal= 0.05 (flips= 1603/32064)  ->  BER post-decode=0.00306
+BER canal= 0.07 (flips= 2244/32064)  ->  BER post-decode=0.01350
+BER canal= 0.08 (flips= 2565/32064)  ->  BER post-decode=0.03263
+BER canal= 0.09 (flips= 2886/32064)  ->  BER post-decode=0.06194
+BER canal= 0.10 (flips= 3206/32064)  ->  BER post-decode=0.09781
+BER canal= 0.11 (flips= 3527/32064)  ->  BER post-decode=0.14131
+BER canal= 0.12 (flips= 3848/32064)  ->  BER post-decode=0.18625
+BER canal= 0.15 (flips= 4810/32064)  ->  BER post-decode=0.32831
+BER canal= 0.20 (flips= 6413/32064)  ->  BER post-decode=0.46519
+
+4/4 casos aprobados
