@@ -46,7 +46,7 @@
 
 ## 2. Producto Principal — Bloque Cognitivo GNU Radio
 
-El aporte central de este proyecto no es el enlace de radio en sí, sino el **bloque de software GNU Radio** que implementa la radio cognitiva completa: desde el sensado espectral con CNN hasta la señalización de salto de canal in-band. El enlace de 10–15 km en Fase 4 es la validación de ese bloque en condiciones reales.
+El aporte central de este proyecto no es el enlace de radio en sí, sino el **bloque de software GNU Radio** que implementa la radio cognitiva completa: desde el sensado espectral con CNN hasta la señalización de salto de canal in-band. El enlace de 4 km en Fase 4 es la validación de ese bloque en condiciones reales (actualizado 28/08/2026, ver §9.1 — antes 5–6 km, y antes de eso 10–15 km).
 
 ### 2.1 Arquitectura del bloque
 
@@ -72,15 +72,24 @@ El aporte central de este proyecto no es el enlace de radio en sí, sino el **bl
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+> **Nota sobre el diagrama:** las flechas Adquisición→Sensado, Sensado→Decisión y Decisión↔Control son conexiones por **puertos de mensajes** (PMT, asíncronas) del scheduler de GNU Radio — no puertos de flujo. La única ruta de streaming en tiempo real (con deadline de símbolo OFDM, ~89 µs) es RX1/TX1 dentro de la Capa de Adquisición y su paso por la Capa de Control In-Band. El barrido de sensado (RX2), el cómputo de PSD, la inferencia CNN y la decisión cognitiva corren en rutas de ejecución independientes de esa ruta de streaming — ver §2.2 para el detalle por capa.
+
 ### 2.2 Capas del bloque
 
 #### Capa 1 — Adquisición (`RadioInterface`)
-Abstracción del hardware SDR. Expone una API uniforme independientemente de si el SDR subyacente es un bladeRF, el SDR full-duplex del Cliente (modelo por definir) u otro. Resuelve internamente las diferencias de driver (`gr-bladeRF` vs el driver específico del SDR Cliente elegido), calibración de DC offset, corrección IQ, y configuración de frecuencia/ganancia.
+No es una única clase con llamadas bloqueantes tipo `leer_iq()` — ese modelo no encaja con el scheduler de flujo continuo de GNU Radio. Se divide en dos sub-bloques con roles distintos:
 
-**Parámetros configurables:** frecuencia central, ancho de banda de muestreo, ganancia RX, tipo de hardware (`bladerf` | `cliente_fd` | `generic`).
+- **`RadioInterfaceDatos`** (RX1/TX1): wiring nativo del flowgraph. El source/sink de `gr-bladeRF` (mismo driver en Gateway y Cliente — ambos nodos usan bladeRF 2.0 micro xA4) conectado directamente por **puertos de flujo** a la cadena OFDM — no expone una API Python de "pedir muestras", es topología de flowgraph pura, como cualquier bloque nativo de GNU Radio.
+- **`RadioInterfaceSensado`** (RX2): bloque de captura por ráfagas para el barrido de la Capa 2. Expone un **puerto de mensajes de entrada** (`retune`) que recibe la próxima posición de sintonía como PMT y reconfigura `set_center_freq()` de forma asíncrona, y un **puerto de mensajes de salida** (`captura`) que publica el vector IQ de la ráfaga una vez completada.
+
+Ambos sub-bloques resuelven internamente la calibración de DC offset (`bladerf_set_correction()`/`libbladeRF`) y corrección IQ — igual en ambos nodos, ya no hace falta abstraer drivers distintos — pero el punto de integración con el resto del bloque cognitivo es siempre un puerto de mensajes o un puerto de flujo, nunca una llamada de método bloqueante entre hilos Python.
+
+**Parámetros configurables:** frecuencia central, ancho de banda de muestreo, ganancia RX, rol de nodo (`gateway` | `cliente`, mismo tipo de hardware `bladerf` en ambos).
 
 #### Capa 2 — Sensado espectral (`SpectralSensor`)
-El bladeRF (AD9361) tiene ~56 MHz de ancho de banda instantáneo máximo: es físicamente imposible capturar los 228 MHz de la banda TVWS (470–698 MHz) en una sola FFT. Esta capa orquesta un **barrido de 5 posiciones de sintonización** sobre el RX2 (canal dedicado a sensado, independiente del TX/RX de datos), cada una cubriendo una sub-banda de 56 MHz con 7–9 canales TVWS visibles. Por cada sub-banda capturada calcula la PSD (FFT de 512 puntos, ventana Hann, método Welch) y la entrega normalizada al clasificador CNN. Luego de las 5 capturas, ensambla el mapa global de los 39 canales (ver Capa 3 y §8).
+El bladeRF (AD9361) tiene ~56 MHz de ancho de banda instantáneo máximo: es físicamente imposible capturar los 228 MHz de la banda TVWS (470–698 MHz) en una sola FFT. Esta capa orquesta un **barrido de 5 posiciones de sintonización** sobre el RX2 (canal dedicado a sensado, independiente del TX/RX de datos), cada una cubriendo una sub-banda de 56 MHz con 7–9 canales TVWS visibles.
+
+Implementada como bloque GNU Radio **sin puertos de flujo** (`io_signature(0, 0, 0)`) — solo puertos de mensajes, porque es una máquina de estados de barrido, no parte de la ruta de muestras. Publica comandos de sintonía al puerto `retune` de `RadioInterfaceSensado` y se suscribe a su puerto `captura`; al recibir una ráfaga, calcula la PSD (FFT de 512 puntos, ventana Hann, método Welch — reusa `calcular_psd`/`normalizar_psd` de `IA/nucleo.py`) en el propio handler de mensaje y publica el vector normalizado por un puerto de mensajes propio (`psd_out`) hacia la Capa 3, luego avanza el estado y ordena la siguiente posición. Como este cómputo no tiene un deadline de símbolo OFDM encima, el handler puede usar NumPy/SciPy sin comprometer el jitter del flowgraph de datos — el barrido de sensado y el canal de datos son rutas de ejecución independientes dentro del scheduler de GNU Radio, no compiten por el mismo `work()`. Tras las 5 capturas del ciclo, el mapa global de los 39 canales lo ensambla la Capa 3 (ver §8), no esta capa.
 
 **Parámetros configurables:** posiciones de barrido, ancho de sub-banda, tamaño FFT, período de ciclo.
 
@@ -95,7 +104,12 @@ Implementa la política de selección de canal y el protocolo de salto. Incluye 
 **Parámetros configurables:** política de selección (`lowest_free` | `max_margin` | `least_used`), canal(es) de refugio, tiempo de pre-anuncio, número de confirmaciones CRC, umbral de degradación.
 
 #### Capa 5 — Control in-band (`InbandControlLayer`)
-Implementa la Opción A: inyección del campo de control (next_ch + t_hop + CRC-16) en las subportadoras OFDM #254–257, y su extracción en el receptor. Latencia de señalización <1 ms.
+Implementa la Opción A: inyección del campo de control (next_ch + t_hop + CRC-16) en las subportadoras OFDM #254–257, y su extracción en el receptor. Latencia de señalización <1 ms. Separa explícitamente la ruta de decisión (asíncrona, por mensajes) de la ruta de inyección/extracción de bits (síncrona, por símbolo OFDM, con el deadline real de ~89 µs):
+
+- **TX (`InbandControlTX`)**: bloque de flujo con puerto de mensajes de entrada `orden_salto`. `CognitiveEngine` publica ahí el paquete de control ya armado (`next_ch`, `t_hop`, `flags`, CRC-16) cuando decide un salto; el handler solo actualiza una palabra de 32 bits en el estado interno del bloque. En cada símbolo OFDM, `work()` únicamente lee esa palabra ya calculada y escribe el bit correspondiente en las subportadoras #254/#256/#257 — el cómputo de CRC/empaquetado nunca ocurre dentro de `work()`.
+- **RX (`InbandControlRX`)**: bloque de flujo con puerto de entrada por streaming (salida del FFT del receptor) y puerto de mensajes de salida `control_recibido`. En `work()` solo extrae y acumula los 3 bits de control por símbolo; al completar los 11 símbolos del mensaje, valida CRC-16 y publica el paquete decodificado por el puerto de mensajes (o lo descarta si falla el CRC) — sin bloquear el flujo de datos.
+
+El **ejecutor del salto** (retuning real de `RadioInterfaceDatos` al llegar `t_hop`) se suscribe al puerto `control_recibido` y programa la reconfiguración por temporizador — es un componente explícito de esta capa, no queda implícito entre la decisión (Capa 4) y la radio (Capa 1).
 
 **Parámetros configurables:** índices de subportadoras de control, esquema de modulación del campo de control, número de repeticiones del pre-anuncio.
 
@@ -108,21 +122,21 @@ Dashboard en tiempo real que muestra el estado completo del sistema cognitivo. I
 
 ## 3. Arquitectura del Sistema de Validación
 
-El bloque cognitivo se valida sobre un enlace punto a punto real **full-duplex**:
+El bloque cognitivo se valida sobre un enlace punto a punto real, en **half-duplex por TDD (software, sin switch RF)** — ver §3.1 para la decisión y por qué reemplazó al full-duplex real que este documento describía antes del 26/07/2026:
 
 ```
-[Comunidad rural — 10-15 km]              [Localidad con fibra]
+[Comunidad rural — 4 km]                   [Localidad con fibra]
   Usuarios locales
        │
   [AP WiFi local]
        │
   Orange Pi 5 (16GB)  ←──── OFDM TVWS ────→  Mini PC Core Ultra 5
-  + SDR full-duplex (TBD)                       + bladeRF 2.0 micro xA4
+  + bladeRF 2.0 micro xA4                       + bladeRF 2.0 micro xA4
   Nodo CLIENTE                                 Nodo GATEWAY
   (demodula, ejecuta)                          (CNN + decisión cognitiva)
        │                                              │
   LPDA TX + LPDA RX                            LPDA TX + LPDA RX + discone
-  (full-duplex, 2 antenas)                     (full-duplex, 2 antenas + sensado)
+  (TDD por software, 2 antenas)                (TDD por software, 2 antenas + sensado)
   LNA (NF≤1dB)                                LNA (NF≤1dB) + PA 2W
                                                       │
                                                Router fibra óptica
@@ -132,23 +146,26 @@ El bloque cognitivo se valida sobre un enlace punto a punto real **full-duplex**
 
 **Principio de operación:** El bloque cognitivo corre íntegramente en el Gateway. El Cliente solo ejecuta las órdenes de salto recibidas vía el campo de control in-band, sin lógica cognitiva propia.
 
-### 3.1 Arquitectura full-duplex (actualización de diseño)
+### 3.1 Arquitectura half-duplex por TDD software (decisión 26/07/2026)
 
-El sistema opera en **full-duplex real**, aprovechando la capacidad 2TX/2RX simultáneos del bladeRF 2.0 micro xA4 y la operación full-duplex del SDR del Cliente (modelo por definir, ver §4.2). Cada nodo utiliza **dos antenas LPDA dedicadas** —una para TX y otra para RX— eliminando la necesidad de conmutación TDD.
+> **Historial de esta decisión (para que quede trazable, no se reescribe en silencio):**
+> 1. Diseño original: TDD con conmutador SPDT físico.
+> 2. 2026-07: se reemplazó por **full-duplex real** (2TX/2RX simultáneos del bladeRF, antenas TX/RX dedicadas) — ver el registro anterior de esta sección más abajo, conservado como nota histórica.
+> 3. **26/07/2026: el full-duplex real se descarta** al analizar el aislamiento TX→RX requerido (~90-110 dB) vs. el disponible solo por separación de antenas (~30-50 dB) — un déficit que ninguna cancelación pasiva por antena cierra. Se adopta **TDD por software**: mismo hardware de 2 antenas dedicadas por nodo (sin switch, sin filtro), pero DL y UL alternan en el tiempo apagando digitalmente el TX propio durante el slot de recepción. Análisis completo, alternativas descartadas (SIC, FDD con filtro) y lo que falta medir: `claudedocs/riesgos_arquitectura_transmision.md` ("Problema 1").
 
-> **Cambio de diseño respecto a versiones anteriores:** Se descartó la arquitectura TDD con conmutador SPDT por dos motivos: (1) la dificultad de aprovisionamiento de conmutadores RF de las especificaciones requeridas en el mercado local, y (2) el full-duplex con antenas dedicadas preserva el throughput simultáneo de ambas direcciones y recupera la pérdida de inserción del conmutador (1.7–2.5 dB), mejorando el margen de enlace en ambos sentidos.
+**Implicaciones de la arquitectura TDD por software:**
+- 4 antenas LPDA en total (2 por nodo: TX y RX — el hardware de antena **no cambió** respecto al full-duplex; lo que cambió es que ya no transmiten simultáneamente), más la discone de sensado en el Gateway.
+- **DL y UL ya NO operan simultáneamente** — comparten el canal en el tiempo (trama TDD con slot DL, slot UL, ventanas de guarda). **Slot y duty cycle decididos (20/08/2026):** slot de 20 símbolos OFDM (~1.78 ms) por dirección, duty cycle **50/50 simétrico** DL/UL, ganancia manual (AGC deshabilitado) en TX/RX durante los slots para eliminar el settling de AGC como incógnita de la guarda. Guarda de diseño: rango 25–70 µs (settling de bias del PA + retardo de propagación a 4 km, ~13 µs de ida — el settling de PA todavía no está medido en banco, ver `claudedocs/riesgos_arquitectura_transmision.md`, "Problema 1"). Con guarda pesimista (70 µs) la eficiencia de slot es ~96.2%. El throughput de §5.3 y la latencia E2E de §9.2 ya están recalculados con este duty cycle.
+- No hay pérdida de inserción de conmutador (nunca la hubo con antenas dedicadas; eso no cambia con TDD por software) — el margen de enlace de §9.1 (que depende de EIRP/FSPL/NF, no de si DL/UL son simultáneos) **sigue siendo válido tal cual**.
+- Pendiente de medir antes de Fase 4: aislamiento real de "TX apagado" y el settling real del bias del PA al conmutar TX on/off (detalle en el doc de riesgos) — la guarda de 25–70 µs es un rango de diseño, no una medición.
 
-**Implicaciones de la arquitectura full-duplex:**
-- 4 antenas LPDA en total (2 por nodo: TX y RX), más la discone de sensado en el Gateway
-- Sin pérdida de inserción de conmutador → mejora de ~2 dB en margen DL y UL
-- DL y UL operan simultáneamente, sin división temporal del canal
-- Requiere separación física/angular adecuada entre las LPDA de TX y RX de un mismo nodo para minimizar el acoplamiento directo TX→RX (autointerferencia)
+> **Nota histórica (registro previo a la decisión del 26/07/2026, ya no vigente):** *"El sistema opera en full-duplex real, aprovechando la capacidad 2TX/2RX simultáneos del bladeRF 2.0 micro xA4 — mismo modelo en Gateway y Cliente. Cada nodo utiliza dos antenas LPDA dedicadas —una para TX y otra para RX— eliminando la necesidad de conmutación TDD."* Se descartó por el déficit de aislamiento TX→RX explicado arriba — la premisa de que antenas dedicadas bastaban para full-duplex real resultó incorrecta.
 
 ### 3.2 Planos de comunicación
 
 | Plano | Medio | Dirección | Implementación |
 |---|---|---|---|
-| **Datos** | OFDM 6 MHz, 470–698 MHz | DL y UL (full-duplex) | GNU Radio, bladeRF TX1/RX1 + SDR Cliente |
+| **Datos** | OFDM 6 MHz, 470–698 MHz | DL y UL (TDD por software, no simultáneo — ver §3.1) | GNU Radio, bladeRF 2.0 micro xA4 TX1/RX1 en ambos nodos |
 | **Control** | Subportadoras OFDM #254–257 | DL Gateway→Cliente | Opción A in-band, <1 ms latencia |
 | **Sensado** | bladeRF RX2 | Gateway escucha espectro | Canal dedicado, antena discone |
 
@@ -165,65 +182,108 @@ El sistema opera en **full-duplex real**, aprovechando la capacidad 2TX/2RX simu
 
 ## 4. Hardware por Nodo
 
+> **Fuente única de las características de cada equipo: `SPECS EQUIPOS/`**
+> (actualizado 28/08/2026) — un archivo por equipo, con la hoja técnica real
+> del modelo ya comprado. Esta sección solo cita esos archivos; si una cifra
+> cambia, se corrige ahí primero. `PRESUPUESTO COMPLETO.xlsx` sigue siendo la
+> referencia de cantidades/ítems de compra (los # de esta sección son su
+> número de fila), pero ya no es la fuente de las especificaciones técnicas.
+> El plano de montaje físico completo (orden de componentes en el mástil,
+> conectores por tramo) vive en `claudedocs/estructura_fisica_instalacion.md`
+> — las tablas y diagramas de esta sección son la lista de equipos y la
+> cadena lógica, no la geometría de instalación.
+>
+> **GDT eliminado del diseño (28/08/2026):** el proyecto decidió no usar
+> descargador de sobretensión en ninguna rama RF — el enlace de validación
+> opera de forma continua solo ~3 horas, no como instalación permanente
+> expuesta a temporada de tormentas, así que el riesgo que el GDT mitigaría
+> no aplica a esta ventana de uso. No hay, de hecho, ninguna línea de GDT en
+> el presupuesto real. Ver `claudedocs/estructura_fisica_instalacion.md`
+> para el razonamiento completo — si el proyecto pasa a una instalación
+> permanente más adelante, reintroducir GDT ahí antes de dejar el enlace
+> desatendido por temporada de lluvias/tormentas.
+
 ### 4.1 Nodo Gateway
 
-| Componente | Especificación | Función |
+| Componente | Especificación real (`SPECS EQUIPOS/`) | Función |
 |---|---|---|
-| SDR | bladeRF 2.0 micro xA4 — 2TX/2RX, 12 bits, VCTCXO ±1 ppm | TX datos DL (TX1) + RX uplink (RX1) + RX sensado CNN (RX2) |
-| PC | Mini PC Intel Core Ultra 5 225 (10 núcleos, hasta 4.9 GHz), 32 GB DDR5, 1 TB SSD | GNU Radio + inferencia CNN ONNX Runtime |
-| PA | 400–1000 MHz, 2W (33 dBm), clase AB | Amplificar TX antes de la antena |
-| LNA RX | 400–1000 MHz, NF ≤1 dB, ganancia 15–25 dB | Bajar NF del receptor uplink a ~1 dB efectivo |
-| Antena TX | LPDA 400–2700 MHz, 10 dBi, N-hembra | Transmisión downlink (dedicada) |
-| Antena RX | LPDA 400–2700 MHz, 10 dBi, N-hembra | Recepción uplink (dedicada) |
-| Antena sensado | Discone 25–1300 MHz, omnidireccional | Entrada dedicada de RX2 para sensado continuo |
-| GDT | N-H/N-M, DC–3 GHz, ≤0.3 dB, ≥5 kA (8/20µs), IP67 | Protección de sobretensión por rama RF |
+| SDR | bladeRF 2.0 micro xA4 — 47 MHz–6 GHz, 2×2 MIMO full-duplex, AD9361, 12 bits, VCTCXO 38.4MHz ±1ppm, 4× SMA-hembra (2TX/2RX), bias-tee 3.3V integrado y controlado por software en **todos** los puertos RF (`SDR_ENLACE`, presupuesto #11, x2 total, 1 por nodo) | TX datos DL (TX1) + RX uplink (RX1) + RX sensado CNN (RX2) |
+| PC | Mini PC (10-20 núcleos, 32 GB DDR5, 1 TB SSD, PSU 300-500W 80+ Bronze — `COMPUTADORA_GATEWAY`, presupuesto #14) | GNU Radio + inferencia CNN ONNX Runtime — **spec de adquisición genérica, sin marca/modelo confirmado**; §10 (afinidad P-core/E-core) asume un Intel Core Ultra 5 225 como referencia, a confirmar contra la unidad realmente entregada |
+| PA | "OEM 2W 1-900MHz", clase **A**, 1-900 MHz, P1dB **>32 dBm**, salida máxima +33 dBm, ganancia típica **30 dB a 500 MHz** (máx. 42 dB), entrada máxima tolerada **+3 dBm**, SMA-hembra ambos lados, 12V DC 300-400mA, PCB sobre disipador pasivo (`PA.md`, presupuesto #15, x2: 1 Gateway + 1 Cliente) | Amplificar TX antes de la antena — **⚠ la entrada máxima tolerada (+3 dBm) es menor que el TX máximo del bladeRF (+6 dBm): hay que operar el bladeRF a ganancia TX reducida por software antes de conectar el PA, no a su máximo — ver `claudedocs/requisitos_pa_lna.md`** |
+| LNA RX | Nooelec LaNA — 20 MHz–4 GHz, ganancia +20 dB a 1000 MHz, NF 0.8-1.0 dB (0.9 típico) a 1000 MHz, entrada máx. 0 dBm, SMA-hembra ambos lados, bias-tee/USB/pines (`LNA.md`, presupuesto #4, x2: Gateway RX1 + Cliente RX1) | Bajar NF del receptor uplink a ~0.94 dB efectivo — montado en la boca de la antena, alimentado por bias-tee del propio bladeRF (ver cadena RX abajo) |
+| LNA sensado | Mismo modelo Nooelec LaNA (presupuesto, "Gastos de subvención" #4, x1, solo Gateway) | Bajar NF de RX2 — igual que el LNA de datos, montado en la boca de la discone |
+| Antena TX | LPDA PCB WA5VJB, 400-1000 MHz, **5 dBi a 500 MHz**, montaje SMA para PCB (o cable soldado directo), sustrato fibra de vidrio (`ANTENA_DIRECCIONAL`, presupuesto #10, x4 total: 2 Gateway + 2 Cliente) | Transmisión downlink (dedicada) — `LINK_BUDGET/` ya usa 5 dBi (hoja técnica real, no el spec de compra de ≥10 dBi que nunca se confirmó con el fabricante) |
+| Antena RX | Misma LPDA WA5VJB, 5 dBi a 500 MHz, SMA (presupuesto #10, mismo lote que la antena TX) | Recepción uplink (dedicada) |
+| Antena sensado | Discone Tram 1411, 25-1300 MHz, VSWR ≤1.5:1, **conector SO-239 (UHF hembra) confirmado**, montaje en mástil ≤35mm de diámetro (`ANTENA_OMNIDIRECCIONAL`, presupuesto #12, x1, solo Gateway) | Entrada dedicada de RX2 para sensado continuo — **⚠ 35mm de mástil máximo no calza con ninguno de los 2 tramos del mástil real (60mm/48mm, ver §5 de `claudedocs/estructura_fisica_instalacion.md`) — necesita reductor** |
 
 **Cadena RF TX Gateway (downlink):**
 ```
-bladeRF TX1 (+6 dBm)
-  → RG-316 pigtail 0.6m (SMA-M↔SMA-M)
-  → PA 2W (+27 dB)
-  → LMR-400 3.5m + GDT (N-M↔N-M)
-  → LPDA TX 10 dBi
-  → EIRP: ~+41.7 dBm (sin pérdida de conmutador)
+bladeRF TX1 — ganancia TX reducida por software (NO al máximo +6 dBm: el
+  PA solo tolera +3 dBm de entrada, ver nota de la tabla)
+  → RG-316 pigtail (SMA-M↔SMA-M)
+  → PA "OEM 2W 1-900MHz" (P1dB real 32 dBm, backoff 7.5 dB → salida
+    promedio +24.5 dBm, clase A)
+  → LMR-400 (conectores a confirmar — todo lo demás en esta cadena es
+    SMA; longitud según instalación real, no fija, ver
+    claudedocs/estructura_fisica_instalacion.md)
+  → LPDA TX 5 dBi (SMA)
+  → EIRP: ~+28.8 dBm (recalculado 28/08/2026 con hojas técnicas reales
+    de SPECS EQUIPOS/ — antes +30.8 dBm con P1dB/ganancia de antena
+    genéricos sin datasheet)
 ```
 
 **Cadena RF RX Gateway (uplink):**
 ```
-LPDA RX 10 dBi
-  → LMR-400 3.5m + GDT (N-M↔N-M)
-  → LNA (NF ≤1 dB, +20 dB) — montar próximo a la antena
-  → RG-316 pigtail 0.3-0.5m (SMA-M↔N-H)
+LPDA RX 5 dBi (SMA)
+  → jumper corto (antena→LNA, pérdida ≈0 dB, ambos conectores SMA)
+  → LNA Nooelec LaNA (NF 0.9 dB, +20 dB) — atornillado directo a la
+    antena, en el tope del mástil, alimentado por bias-tee del propio
+    bladeRF (circuito integrado en el puerto RX del SDR — sin inyector
+    de hardware adicional, ver claudedocs/estructura_fisica_instalacion.md §6.1)
+  → LMR-400 (longitud según instalación real, baja el mástil)
+  → RG-316 pigtail (SMA-M↔SMA-H)
   → bladeRF RX1
-  → NF sistema total: ~1.04 dB
+  → NF sistema total: ~0.94 dB (se cumple porque el LNA va ANTES del
+    tramo largo de cable, no después — ver claudedocs/estructura_fisica_instalacion.md §3.2)
 ```
 
 **Cadena RF RX2 (sensado espectral — independiente):**
 ```
-Discone omnidireccional
-  → LMR-400 3.5m + GDT (N-M↔SO239/N adaptador)
+Discone Tram 1411 (SO-239)
+  → adaptador SO-239↔SMA (todo lo demás en la cadena es SMA)
+  → LNA de sensado — en el tope del mástil, junto a la discone, bias-tee
+  → LMR-400 (longitud según instalación real)
   → bladeRF RX2
   → Barrido continuo 470–698 MHz → CNN cada 100–200 ms
 ```
 
 ### 4.2 Nodo Cliente
 
-| Componente | Especificación | Función |
+| Componente | Especificación real (`SPECS EQUIPOS/`) | Función |
 |---|---|---|
-| SDR | Por definir — full-duplex, ADC 12 bits, ≥30 MSPS (USB 3.0), TCXO ±2 ppm típico | RX datos DL + TX uplink (simultáneos) |
+| SDR | bladeRF 2.0 micro xA4 — mismo modelo que el Gateway, ver tabla 4.1 (`SDR_ENLACE`, presupuesto #11) | RX datos DL + TX uplink (no simultáneos — TDD por software, ver §3.1) |
 | SBC | Orange Pi 5, 16 GB RAM, RK3588 (ARM64) | GNU Radio RX/TX, scripts de prueba, monitoreo remoto |
-| LNA RX | 400–1000 MHz, NF ≤1 dB, ganancia 15–25 dB | Bajar NF downlink a ~1 dB efectivo |
-| Antena RX | LPDA 400–2700 MHz, 10 dBi, N-hembra | Recepción downlink (dedicada) |
-| Antena TX | LPDA 400–2700 MHz, 10 dBi, N-hembra | Transmisión uplink (dedicada) |
-| Gabinete | IP65 | Protección ambiental en campo |
-| GDT | N-H/N-M, DC–3 GHz, ≤0.3 dB, ≥5 kA (8/20µs), IP67 | Protección de sobretensión por rama RF |
+| PA TX | "OEM 2W 1-900MHz" — mismo modelo real que el Gateway, ver tabla 4.1 (`PA.md`, presupuesto #15) | Cierra el enlace UL con margen amplio (+34.5 dB BPSK a 4 km, LOS confirmado, §9.1) — misma advertencia de entrada máxima +3 dBm que el Gateway |
+| LNA RX | Nooelec LaNA — mismo modelo que el Gateway (`LNA.md`, presupuesto #4) | Bajar NF downlink a ~0.94 dB efectivo — montado en la boca de la antena, bias-tee del propio bladeRF |
+| Antena RX | LPDA WA5VJB, 5 dBi a 500 MHz, SMA (`ANTENA_DIRECCIONAL`, presupuesto #10) | Recepción downlink (dedicada) |
+| Antena TX | Misma LPDA WA5VJB, 5 dBi a 500 MHz, SMA (presupuesto #10) | Transmisión uplink (dedicada) |
+| Gabinete | IP65, 300×250×150mm (presupuesto #13, x2 comprados — 1 asignado al Cliente, ver `claudedocs/estructura_fisica_instalacion.md` §7 para el destino del segundo) | Protección ambiental en campo — aloja bladeRF, PA y Orange Pi 5 |
 
-**Consideraciones generales para el SDR Cliente (modelo final por definir):**
-- DC offset / LO leakage en subportadora central → calibrar con la herramienta del fabricante antes de cada sesión (procedimiento específico depende del modelo elegido)
+> **Cambio de diseño:** el candidato previo (LimeSDR Mini 2.0, en trámite de aduana) fue reemplazado por un segundo bladeRF 2.0 micro xA4 — mismo modelo que el Gateway. Esto elimina la necesidad de soportar un driver/calibración distintos para el Cliente.
+
+> **Alimentación del Cliente — sin resolver:** el presupuesto no tiene
+> ningún ítem de panel solar, batería o controlador de carga, pese a que
+> el sitio no tiene red eléctrica confiable. El PA real consume 12V DC
+> 300-400mA (`PA.md`) — un dato concreto para dimensionar la batería, que
+> antes no existía. Ver `claudedocs/estructura_fisica_instalacion.md` §6.2
+> — bloqueante para F4 si no se resuelve antes.
+
+**Consideraciones generales para el SDR Cliente (bladeRF 2.0 micro xA4, mismo modelo que el Gateway):**
+- DC offset / LO leakage en subportadora central (RFIC AD9361) → calibrar con `bladerf_set_correction()` / calibración nativa de `libbladeRF` antes de cada sesión — mismo procedimiento que el Gateway, ya no depende de "el modelo elegido"
 - IQ imbalance → bloque IQ Corrector en GNU Radio (tiempo real)
-- Timestamping hardware: a verificar según el modelo; si no es preciso, mantener ventana de guarda de 10 ms en saltos de canal
-- Driver específico del fabricante (p. ej. `gr-limesdr`, `gr-plutosdr`, según el SDR finalmente seleccionado) distinto a `gr-bladeRF` → resuelto por la capa `RadioInterface`
-- GNU Radio en ARM64: puede requerir compilación desde fuente del driver del SDR elegido (verificar disponibilidad para RK3588)
+- Timestamping: mismo VCTCXO ±1 ppm que el Gateway — a verificar en banco, pero ya no es una incógnita de hardware; mantener de todos modos la ventana de guarda de 10 ms en saltos de canal como margen conservador
+- Driver: `gr-bladeRF`, igual que el Gateway — ya no hace falta soportar `gr-limesdr`/`gr-plutosdr` ni una capa de abstracción entre drivers distintos
+- GNU Radio en ARM64: `gr-bladeRF`/`libbladeRF` deben compilarse desde fuente para RK3588 (sin wheels/paquetes precompilados garantizados) — reservar tiempo en F2 para esto
 
 ---
 
@@ -251,7 +311,7 @@ Discone omnidireccional
 Índice  26–253:  Datos + pilotos dispersos (~228 sub)
 Índice 254–257:  Campo de control in-band (Opción A)
                    #254 → bit 0 del mensaje de control (BPSK)
-                   #255 → EVITADA (DC offset / LO leakage del SDR Cliente)
+                   #255 → EVITADA (DC offset / LO leakage del RFIC AD9361 — aplica a ambos nodos, mismo bladeRF)
                    #256 → bit 1 del mensaje de control (BPSK)
                    #257 → bit 2 del mensaje de control (BPSK)
 Índice 258–486:  Datos + pilotos dispersos (~229 sub)
@@ -260,15 +320,22 @@ Discone omnidireccional
 
 ### 5.3 Throughput por modo
 
-| Modulación | Tasa FEC | Throughput bruto | Factor corrección | Throughput neto |
-|---|---|---|---|---|
-| BPSK | 1/2 | 6 Mbps | × 0.321 | ~1.9 Mbps |
-| BPSK | 3/4 | 6 Mbps | × 0.482 | ~2.9 Mbps |
-| QPSK | 1/2 | 12 Mbps | × 0.321 | ~3.9 Mbps |
-| QPSK | 3/4 | 12 Mbps | × 0.482 | ~5.8 Mbps |
-| 16-QAM | 3/4 | 24 Mbps | × 0.482 | ~11.6 Mbps |
+| Modulación | Tasa FEC | Throughput bruto | Factor corrección FEC | Throughput neto (1 dirección, sin TDD) | **Throughput TDD 50/50 (por dirección)** |
+|---|---|---|---|---|---|
+| BPSK | 1/2 | 6 Mbps | × 0.321 | ~1.9 Mbps | **~0.92 Mbps** |
+| BPSK | 3/4 | 6 Mbps | × 0.482 | ~2.9 Mbps | **~1.4 Mbps** |
+| QPSK | 1/2 | 12 Mbps | × 0.321 | ~3.9 Mbps | **~1.9 Mbps** |
+| QPSK | 3/4 | 12 Mbps | × 0.482 | ~5.8 Mbps | **~2.8 Mbps** |
+| 16-QAM | 3/4 | 24 Mbps | × 0.482 | ~11.6 Mbps | **~5.6 Mbps** |
 
-> Con full-duplex, DL y UL alcanzan estos valores **simultáneamente** (no divididos en el tiempo como ocurriría en TDD). Objetivos conservadores validados en Fase 4 (10–15 km, NLOS 15 dB): **≥1.9 Mbps DL** y **≥1.9 Mbps UL** en BPSK R=1/2.
+> **Recalculado bajo TDD (20/08/2026):** slot y duty cycle ya decididos
+> (§3.1: 20 símbolos/slot, **50/50 simétrico** DL/UL, guarda pesimista 70
+> µs → eficiencia de slot ~96.2%). Columna TDD = neto × 0.5 (duty cycle) ×
+> 0.962 (eficiencia de guarda) ≈ neto × 0.481. Con el margen de enlace
+> confirmado (§9.1: +25.5 dB incluso en 16-QAM a 4 km LOS, ambas direcciones),
+> **16-QAM ya es viable en ambas direcciones**, no solo en Downlink — el
+> límite ahora es el duty cycle, no el margen de enlace como antes del
+> PA de 2 W en el Cliente (ver `claudedocs/requisitos_pa_lna.md`).
 
 ---
 
@@ -289,15 +356,16 @@ Discone omnidireccional
     ↓
 [SDR] bladeRF DAC 12 bits → up-convert canal TVWS activo
     ↓
-[RF]  PA 2W → GDT → LMR-400 → LPDA TX (dedicada)
+[RF]  PA 2W real (backoff 7.5 dB) → LMR-400 (longitud según instalación,
+      sin GDT — ver §4.1) → LPDA TX (dedicada)
     ↓
-[AIRE] EIRP ~+41.7 dBm | PRx Cliente ≈ −77 dBm a 15 km
+[AIRE] EIRP ~+28.8 dBm | PRx Cliente ≈ −66.2 dBm a 4 km (LOS)
 ```
 
 ### 6.2 Flujo RX Downlink (en el Cliente)
 
 ```
-[LPDA RX → LNA → LMR-400 → SDR Cliente ADC 12 bits]
+[LPDA RX → LNA → LMR-400 → bladeRF Cliente ADC 12 bits]
     ↓
 [SYNC] Schmidl-Cox: detecta inicio de símbolo, estima CFO
     ↓
@@ -314,33 +382,45 @@ Discone omnidireccional
 [APP]  Orange Pi 5 → AP WiFi → usuario final
 ```
 
-### 6.3 Flujo TX Uplink (Cliente → Gateway, simultáneo con RX)
+### 6.3 Flujo TX Uplink (Cliente → Gateway, en su slot TDD — ver §3.1)
 
 ```
 [Orange Pi 5 / datos usuario hacia Internet]
     ↓
-[MAC + FEC + BPSK] — modulación forzada (margen ajustado en UL)
+[MAC + FEC + modulación adaptativa BPSK/QPSK/16-QAM] — ya no forzado a BPSK (ver nota abajo)
     ↓
 [OFDM] IFFT 512 + CP 128 (sin campo de control in-band en UL)
     ↓
-[SDR] SDR Cliente TX +10 dBm (sin PA, valor de referencia — ajustar según modelo final)
+[SDR] bladeRF 2.0 micro xA4 Cliente TX +6 dBm → PA 2W (backoff 7.5 dB)
     ↓
-[RF]  LMR-400 → LPDA TX (dedicada)
+[RF]  LMR-400 (longitud según instalación, sin GDT — ver §4.1) → LPDA TX (dedicada)
     ↓
-[AIRE] EIRP +20 dBm | PRx Gateway ≈ −96 dBm a 15 km
+[AIRE] EIRP ~+28.8 dBm | PRx Gateway ≈ −66.2 dBm a 4 km (LOS)
 ```
+
+> **Actualizado 20/08/2026 — UL ya no fuerza BPSK:** hasta esta fecha el
+> Cliente transmitía sin PA (EIRP +12 dBm) y el margen UL no cerraba ni en
+> BPSK a 15 km (§9.1 tenía el registro de las dos correcciones que llevaron
+> a eso, 26/07 y 29/07). Con PA de 2 W confirmado también en el Cliente y
+> la distancia final del enlace (4 km, actualizado 28/08/2026 — antes 6 km),
+> el Uplink queda **simétrico al Downlink** (+34.5/+31.5/+25.5 dB
+> BPSK/QPSK/16-QAM, §9.1 — recalculado 05/09/2026 con LOS confirmado por
+> estudio de sitio, hojas técnicas reales de `SPECS EQUIPOS/` y la distancia
+> final) — la modulación adaptativa por CNN aplica igual en ambas
+> direcciones, ya no hay razón para forzar BPSK
+> en UL por margen de enlace.
 
 ### 6.4 Flujo RX Uplink (en el Gateway)
 
 ```
-[LPDA RX → GDT → LNA → SDR Cliente RX1]
+[LPDA RX → LNA → LMR-400 → bladeRF Cliente RX1]
     ↓
 [SYNC + FFT + EQ] — misma cadena que el Cliente en DL
     ↓
-[DEMOD] BPSK → Viterbi → paquetes IP → router fibra → Internet
+[DEMOD] Demapeo BPSK/QPSK/16-QAM (adaptativo, ver §6.3) → Viterbi/LDPC → paquetes IP → router fibra → Internet
 ```
 
-> **Full-duplex:** TX1 y RX1 del bladeRF operan simultáneamente sobre antenas LPDA dedicadas. RX2 (sensado) opera en paralelo con su propia discone. Las tres cadenas RF del Gateway funcionan de forma concurrente e independiente.
+> **TDD por software (§3.1):** TX1 y RX1 del bladeRF usan antenas LPDA dedicadas pero **no transmiten/reciben datos simultáneamente** — alternan por slot (DL/UL). RX2 (sensado) sigue operando en paralelo con su propia discone, sin relación con el esquema TDD de datos — es un canal independiente que no comparte antena ni cadena con TX1/RX1.
 
 ---
 
@@ -364,34 +444,67 @@ Tiempo de transmisión completa: 11 × 89 µs ≈ 0.98 ms
 Repetición: cada símbolo OFDM durante el período de pre-anuncio (10–20 tramas ≈ 100–200 ms)
 ```
 
-### 7.3 TX del campo de control (Gateway)
+### 7.3 TX del campo de control (Gateway) — `InbandControlTX`
 
 ```python
-# Pseudocódigo — implementación en GNU Radio Python Block
+# Pseudocódigo — GNU Radio sync_block con puerto de mensajes de entrada.
+# El armado del paquete ocurre en el handler (asíncrono); work() solo lee
+# estado ya calculado, para no meter cómputo en la ruta de tiempo real.
+
 def build_control_packet(next_ch, t_hop, flag=0b00):
     payload = (next_ch & 0x3F) | ((t_hop & 0xFF) << 6) | ((flag & 0x3) << 14)
     crc = crc16(payload.to_bytes(2, 'big'))
     return payload | (crc << 16)  # 32 bits totales
 
-# Tagged Stream Mux inyecta los bits en sub #254, #256, #257
-# antes del OFDM Carrier Allocator en el flowgraph del Gateway
+class InbandControlTX(gr.sync_block):
+    def __init__(self):
+        gr.sync_block.__init__(self, name="inband_control_tx",
+                                in_sig=[...], out_sig=[...])
+        self.message_port_register_in(pmt.intern("orden_salto"))
+        self.set_msg_handler(pmt.intern("orden_salto"), self._on_orden_salto)
+        self._palabra_control = 0  # última palabra de 32 bits lista para inyectar
+
+    def _on_orden_salto(self, msg):
+        # publicado por CognitiveEngine (Capa 4) cuando decide un salto
+        next_ch, t_hop, flag = pmt_a_orden_salto(msg)
+        self._palabra_control = build_control_packet(next_ch, t_hop, flag)
+
+    def work(self, input_items, output_items):
+        # por símbolo OFDM: escribe el bit correspondiente de self._palabra_control
+        # en sub #254/#256/#257 — sin CRC ni empaquetado aquí
+        ...
 ```
 
-### 7.4 RX del campo de control (Cliente)
+### 7.4 RX del campo de control (Cliente) — `InbandControlRX`
 
 ```python
-# Pseudocódigo — implementación en GNU Radio Python Block
-def process_control_symbol(sub254, sub256, sub257):
-    bits = [decode_bpsk(sub254), decode_bpsk(sub256), decode_bpsk(sub257)]
-    buffer.append(bits)
-    if len(buffer) == 11:  # mensaje completo
-        word = bits_to_uint32(buffer)
-        if verify_crc16(word):
-            next_ch = word & 0x3F
-            t_hop   = (word >> 6) & 0xFF
-            flag    = (word >> 14) & 0x3
-            schedule_hop(next_ch, t_hop * 10e-3)
-        buffer.clear()
+# Pseudocódigo — GNU Radio sync_block con puerto de mensajes de salida.
+# work() solo extrae/acumula bits por símbolo (deadline real); la validación
+# de CRC se dispara una vez completado el mensaje, no en cada símbolo.
+
+class InbandControlRX(gr.sync_block):
+    def __init__(self):
+        gr.sync_block.__init__(self, name="inband_control_rx",
+                                in_sig=[...], out_sig=None)
+        self.message_port_register_out(pmt.intern("control_recibido"))
+        self._buffer = []
+
+    def work(self, input_items, output_items):
+        sub254, sub256, sub257 = self._extraer_subportadoras(input_items)
+        self._buffer.append([decode_bpsk(sub254), decode_bpsk(sub256), decode_bpsk(sub257)])
+        if len(self._buffer) == 11:  # mensaje completo (11 símbolos × 3 bits)
+            word = bits_to_uint32(self._buffer)
+            if verify_crc16(word):
+                self.message_port_pub(pmt.intern("control_recibido"),
+                                       orden_salto_a_pmt(word))
+            self._buffer.clear()
+        return len(input_items[0])
+
+# Ejecutor del salto (fuera de este bloque) — se suscribe a 'control_recibido'
+# y programa la retunning real de RadioInterfaceDatos:
+def on_control_recibido(msg):
+    next_ch, t_hop, flag = pmt_a_orden_salto(msg)
+    programar_retune(RadioInterfaceDatos, next_ch, delay=t_hop * 10e-3)
 ```
 
 ### 7.5 Robustez
@@ -400,7 +513,9 @@ Con PER del 10% y pre-anuncio de 20 repeticiones: P(fallo total) = 0.1²⁰ ≈ 
 
 ### 7.6 Protocolo de canal refugio (contingencia)
 
-Si el SNR del canal activo cae por debajo de un umbral configurable, ambos nodos saltan de forma autónoma al canal de refugio pre-acordado (por defecto: canal más bajo de la banda, 470 MHz, mejor difracción NLOS). No requiere coordinación explícita porque el destino está pre-acordado en el firmware de ambos nodos.
+Si el SNR del canal activo cae por debajo de un umbral configurable, ambos nodos saltan de forma autónoma al canal de refugio pre-acordado (por defecto: canal más bajo de la banda, 470 MHz, menor FSPL de toda la banda TVWS). No requiere coordinación explícita porque el destino está pre-acordado en el firmware de ambos nodos.
+
+> **Nota (05/09/2026):** la razón original para elegir 470 MHz era "mejor difracción NLOS" — ya no aplica, un estudio de sitio confirmó que el enlace Gateway-Cliente es LOS (línea de vista despejada) a los 4 km de distancia final, no NLOS. La elección de 470 MHz como canal de refugio se mantiene, pero por una razón distinta: es el extremo de menor frecuencia de la banda TVWS del proyecto (470-698 MHz), y FSPL crece con la frecuencia (`LINK_BUDGET/core.py::fspl_db`) — a 4 km, 470 MHz tiene ~3.4 dB menos pérdida de trayecto que 698 MHz (extremo superior de la banda), lo que da más margen de enlace justo cuando el enlace ya está degradado y necesita el colchón adicional. No se decidió revisar esta elección de canal, solo corregir su justificación.
 
 ---
 
@@ -497,35 +612,99 @@ Primer entrenamiento completo de extremo a extremo (arquitectura → entrenamien
 
 ## 9. Link Budget y Parámetros de Rendimiento
 
-### 9.1 Link budget (full-duplex, sin pérdida de conmutador)
+### 9.1 Link budget (antenas dedicadas, sin pérdida de conmutador)
 
-La eliminación del conmutador SPDT recupera 1.7–2.5 dB de margen en ambas direcciones respecto al diseño TDD anterior. Los valores incluyen las pérdidas reales de GDT y cables LMR-400.
+> **Fuente de verdad: `LINK_BUDGET/`.** Esta tabla es un snapshot para
+> lectura rápida — si cambia cualquier parámetro (potencia, antena,
+> LNA/PA, distancia, modulación), recalcular con la calculadora
+> (`LINK_BUDGET/README.md`) y actualizar **solo este bloque**, no otros
+> documentos. Estos valores **no dependen** de si DL/UL son simultáneos
+> (full-duplex) o TDD (§3.1) — son el margen de una dirección a la vez, y
+> siguen siendo válidos tras la decisión de TDD del 26/07/2026; lo que sí
+> cambia con TDD es el throughput/latencia efectivos (§5.3, §9.2), no
+> este link budget.
+
+La eliminación del conmutador SPDT (reemplazado por antenas TX/RX dedicadas, ver §3.1) recupera 1.7–2.5 dB de margen en ambas direcciones respecto al diseño TDD-con-switch original. Los valores incluyen las pérdidas reales de cables LMR-400 — **ya no incluyen GDT**, eliminado del diseño el 28/08/2026 (enlace de validación de solo ~3h, no instalación permanente — ver `claudedocs/estructura_fisica_instalacion.md`).
+
+**Actualizado 05/09/2026 — LOS confirmado por estudio de sitio, distancia final 4 km, hojas técnicas reales de `SPECS EQUIPOS/`:** ambos nodos llevan el mismo PA real ("OEM 2W 1-900MHz", P1dB >32 dBm, no el nominal genérico de 33 dBm usado antes), operado con backoff 7.5 dB (salida promedio +24.5 dBm), la antena LPDA real (WA5VJB, 5 dBi a 500 MHz, no el spec de compra de ≥10 dBi nunca confirmado ni el valor conservador de 6 dBi), la distancia final del enlace es **4 km**, y un estudio de sitio confirmó **línea de vista (LOS) despejada** entre Gateway y Cliente — ya no se asume la pérdida NLOS de 15 dB usada hasta el 04/09/2026. Downlink y Uplink siguen siendo simétricos:
 
 | Parámetro | Downlink | Uplink |
 |---|---|---|
-| EIRP TX | +41.7 dBm (PA 2W) | +20 dBm (sin PA) |
-| FSPL + NLOS (15 km, 600 MHz) | −126 dB | −126 dB |
-| Ganancia antena RX | +10 dBi | +10 dBi |
-| Potencia recibida estimada | ~−77 dBm | ~−96 dBm |
-| NF receptor | ~1.0 dB (LNA CLI) | ~1.04 dB (LNA GW) |
-| Sensibilidad BPSK | −100.7 dBm | −100.7 dBm |
-| **Margen BPSK** | **~+18 dB** | **~+3.7 dB** |
-| Sensibilidad QPSK | −97.7 dBm | — |
-| **Margen QPSK** | **~+15 dB** | **+0.7 dB (marginal)** |
+| EIRP TX | +28.8 dBm (PA real, backoff 7.5 dB, sin GDT) | +28.8 dBm (PA real, backoff 7.5 dB, sin GDT) |
+| FSPL (4 km, 600 MHz, LOS confirmado por estudio de sitio — sin término NLOS) | −100.0 dB | −100.0 dB |
+| Ganancia antena RX | +5 dBi | +5 dBi |
+| Potencia recibida estimada | ~−66.2 dBm | ~−66.2 dBm |
+| NF receptor | ~0.94 dB | ~0.94 dB |
+| Sensibilidad BPSK / QPSK / 16-QAM | −100.77 / −97.77 / −91.77 dBm | −100.77 / −97.77 / −91.77 dBm |
+| **Margen BPSK / QPSK / 16-QAM** | **+34.5 / +31.5 / +25.5 dB** | **+34.5 / +31.5 / +25.5 dB** |
 
-> **Mejora por full-duplex:** Al eliminar el conmutador, el margen UL BPSK sube de ~+1.4 dB (diseño TDD) a ~+3.7 dB, dando un colchón mucho más robusto frente a lluvia o NLOS mayor al estimado. El PA en el Cliente queda como contingencia documentada para Fase 4 solo si las mediciones reales lo requieren.
+> **LOS confirmado por estudio de sitio (05/09/2026):** hasta el 04/09/2026 este link budget asumía 15 dB de pérdida adicional por NLOS (obstrucción de línea de vista), sin revalidar para la distancia final de 4 km. Un estudio de sitio confirmó que el enlace Gateway-Cliente es **LOS** (línea de vista despejada) a 4 km — no un supuesto ni un TBD, un hallazgo de campo. Esto retira el término NLOS del presupuesto (`LINK_BUDGET/core.py`, `perdida_nlos_db` default 15.0→0.0 dB), subiendo el margen ~15 dB en cada modulación respecto al snapshot anterior (+19.5/+16.5/+10.5 dB). Ningún otro parámetro de hardware cambió.
+
+> **Historial (vigente hasta 20/08/2026, ya no aplica):** hasta esta fecha el
+> Uplink no tenía PA (EIRP +12 dBm) y no cerraba ni en BPSK a 15 km (-7.3 dB)
+> tras dos correcciones (26/07: TX real del bladeRF +6 dBm, no +10 dBm;
+> 29/07: ganancia de antena LPDA 6 dBi, no 10 dBi). Ver `claudedocs/requisitos_pa_lna.md`
+> para el registro completo — se resolvió confirmando PA de 2 W también en
+> el Cliente y la distancia real del enlace, no con un rediseño de antena o
+> modulación.
+>
+> **Corrección con hojas técnicas reales (28/08/2026):** hasta esta fecha se
+> usaba P1dB=33dBm (nominal genérico "PA de 2W") y ganancia de antena 6dBi
+> (valor conservador sin datasheet). La hoja técnica real del PA
+> (`SPECS EQUIPOS/PA.md`) da P1dB **>32 dBm** (Psat es la cifra de 33 dBm,
+> no P1dB) y clase **A** (no AB); la de la antena (`SPECS EQUIPOS/ANTENA_DIRECCIONAL`)
+> da **5 dBi a 500 MHz**. A 6 km esto habría bajado el margen ~2.9 dB en
+> cada modulación respecto al snapshot con specs genéricas — pero la
+> reducción de distancia a 4 km (misma fecha, ver nota abajo) recupera
+> ~3.5 dB de FSPL, así que el margen final (+19.5/+16.5/+10.5 dB) queda
+> mejor que el snapshot original a 6 km con specs genéricas (+18.9/+15.9/+9.9 dB).
+>
+> **Distancia final del enlace: 4 km (28/08/2026).** Reemplaza el rango de
+> diseño de 5-6 km que se usaba desde el 20/08/2026 (y antes, 10-15 km,
+> antes de tener la ubicación real de los nodos). Recalcular
+> automáticamente cualquier cifra derivada de la distancia (FSPL, margen,
+> potencia recibida) con `LINK_BUDGET/` — no quedan valores hand-computed
+> para 5-6 km en este documento.
+>
+> **Backoff del PA (20/08/2026):** operar a 7.5 dB de backoff (dentro del
+> rango 6-9 dB exigido para linealidad OFDM, `claudedocs/requisitos_pa_lna.md`
+> §3.1/§3.2 punto 5) en vez del mínimo posible — con margen de enlace
+> abundante sobra espacio para priorizar linealidad/ACPR. Esto también deja
+> la potencia conducida a la antena en ~+23.8 dBm (no depende de la
+> distancia), dentro del límite legal de densidad espectral (Art. 8, 12.6
+> dBm/100kHz) con ~6.1-6.6 dB de margen — resuelve el excedente de PSD que
+> había marcado `claudedocs/cumplimiento_normativo_tvws.md` con el modelo
+> de potencia anterior (sin backoff).
+>
+> **⚠ Entrada máxima del PA (nuevo, 28/08/2026):** la hoja técnica real
+> (`SPECS EQUIPOS/PA.md`) especifica una entrada máxima tolerada de **+3 dBm**
+> — el bladeRF a su ganancia TX máxima entrega ~+5.7 dBm al PA (tras el
+> pigtail), por encima de ese límite. Hay que reducir la ganancia TX del
+> bladeRF por software (no operarlo a su máximo) antes de conectar el PA —
+> ver `claudedocs/requisitos_pa_lna.md` y `claudedocs/estructura_fisica_instalacion.md`.
 
 ### 9.2 Latencias del sistema
 
+> **Recalculado bajo TDD (20/08/2026):** con slot/duty cycle ya decididos
+> (§3.1: 20 símbolos/slot ≈1.78 ms, 50/50 DL/UL), un paquete espera en
+> promedio medio ciclo de trama (~1.83 ms) y en el peor caso un ciclo
+> completo (~3.66 ms con guarda pesimista de 70 µs) para su slot — muy por
+> debajo del presupuesto de evacuación de canal (<300 ms). La señalización
+> de control in-band, al viajar solo durante el slot DL, hereda esa misma
+> espera en el peor caso — su latencia deja de ser <1 ms "puro" y pasa a
+> ser <1 ms de transmisión efectiva + hasta ~3.66 ms de espera de turno.
+
 | Componente | Valor | Origen |
 |---|---|---|
-| Propagación RF (15 km) | 0.050 ms | Física |
+| Propagación RF (4 km) | 0.013 ms | Física |
 | Símbolo OFDM | ~89 µs | 640 muestras / 7.68 MSPS |
+| Slot TDD (20 símbolos) | ~1.78 ms | §3.1, decidido 20/08/2026 |
+| Ventana de guarda TDD (DL↔UL) | 25–70 µs | Settling bias PA + propagación 4 km — rango de diseño, no medido en banco (§3.1) |
 | Inferencia CNN (ONNX) | <10 ms | Core Ultra 5 225 |
-| Señalización control in-band | <1 ms | Subportadoras #254–257 |
+| Señalización control in-band | <1 ms transmisión + hasta ~3.66 ms espera de slot | Subportadoras #254–257, ver nota TDD arriba |
 | Ciclo de sensado CNN | 100–200 ms | bladeRF RX2 barrido |
-| Ventana de guarda en salto | 10 ms | PLL lock + margen |
-| **Latencia E2E datos** | **10–30 ms** | Propagación + GNU Radio |
+| Ventana de guarda en salto de canal | 10 ms | PLL lock + margen (retuning de frecuencia — distinto de la guarda TDD DL/UL) |
+| **Latencia E2E datos** | **~1.8–3.7 ms (espera de slot TDD) + propagación + GNU Radio** | Recalculado 20/08/2026 con duty cycle 50/50 |
 | **Evacuación de canal** | **<300 ms** | Sensado + CNN + control + guarda |
 
 ---
@@ -533,6 +712,15 @@ La eliminación del conmutador SPDT recupera 1.7–2.5 dB de margen en ambas dir
 ## 10. Configuración de Cómputo en Tiempo Real
 
 El nodo Gateway usa un procesador Intel Core Ultra 5 225 con **arquitectura híbrida (P-cores + E-cores)**. GNU Radio requiere latencia consistente, por lo que el flowgraph debe anclarse explícitamente a los P-cores para evitar que el scheduler de Linux lo asigne a E-cores (más lentos), lo que causaría jitter o underruns en el flujo USB del bladeRF.
+
+> **Sin confirmar contra la compra real (28/08/2026):** `SPECS EQUIPOS/COMPUTADORA_GATEWAY`
+> — la fuente única para specs de hardware ya comprado — solo tiene la
+> especificación genérica de licitación (10-20 núcleos, etc.), sin marca ni
+> modelo. Todo lo que sigue en esta sección asume que la unidad entregada es
+> efectivamente un Intel Core Ultra 5 225 (o equivalente con arquitectura
+> híbrida P-core/E-core) — confirmar contra la unidad real antes de aplicar
+> esta configuración; si el equipo entregado no tiene núcleos híbridos, esta
+> sección completa no aplica y no hace falta `isolcpus`/afinidad P-core.
 
 ### 10.1 Identificación de núcleos
 
@@ -578,7 +766,7 @@ sudo systemctl disable irqbalance
 | **F1** ⚠ extendida | Recolección dataset + entrenamiento IA + compras HW | 18/05/2026 | 10/07/2026 | 53 | Franco R. Espinoza |
 | **F2** comprimida | Integración SDR + capa MAC + bloque cognitivo | 10/07/2026 | 31/08/2026 | 52 | Victor M. Soto |
 | **F3** comprimida | Enlace piloto urbano (azotea UNI) | 01/09/2026 | 20/10/2026 | 50 | Sandro G. Niño |
-| **F4** comprimida | Despliegue rural 10–15 km + validación | 21/10/2026 | 02/12/2026 | 43 | Equipo completo |
+| **F4** comprimida | Despliegue rural 4 km + validación | 21/10/2026 | 02/12/2026 | 43 | Equipo completo |
 | **F5** | Análisis + informe final | 03/12/2026 | 15/12/2026 | 13 | Equipo completo |
 
 > **Alerta F5:** Solo 13 días para el cierre. La redacción del informe final debe iniciarse en paralelo desde F4.
@@ -587,7 +775,10 @@ sudo systemctl disable irqbalance
 
 ## 12. Estado del Proyecto
 
-**Fecha de referencia: 15 de junio de 2026**
+**Fecha de referencia: 15 de junio de 2026** (secciones individuales tienen
+correcciones puntuales más recientes, con su propia fecha — ver ⚠ en §3.1,
+§5.3, §9.1, §9.2; esta fecha de referencia cubre la estructura general del
+documento, no cada cifra).
 
 ### ✅ Completado
 
@@ -595,10 +786,10 @@ sudo systemctl disable irqbalance
 - Diseño del esquema de control in-band Opción A (subportadoras #254–257)
 - Protocolo de canal refugio pre-acordado como contingencia
 - Especificación técnica completa de hardware (ambos nodos)
-- Decisión de arquitectura full-duplex con 4 antenas LPDA (eliminación de conmutadores SPDT)
+- Decisión de arquitectura de antena con 4 LPDA dedicadas (eliminación de conmutadores SPDT) — inicialmente para full-duplex real, **revisada el 26/07/2026 a TDD por software** tras evaluar el aislamiento TX→RX requerido (ver §3.1)
 - Selección de PC Gateway (Core Ultra 5 225) y estrategia de afinidad de CPU para tiempo real
-- Link budget recalculado con la mejora de margen del full-duplex
-- Decisiones de diseño documentadas: eliminación LoRa, full-duplex, LNA GW, Orange Pi 5 como nodo Cliente
+- Link budget recalculado con la mejora de margen de las antenas dedicadas (válido independientemente del esquema de duplexado, ver §9.1) — ahora mantenido en `LINK_BUDGET/`
+- Decisiones de diseño documentadas: eliminación LoRa, antenas TX/RX dedicadas (full-duplex → TDD por software), LNA GW, Orange Pi 5 como nodo Cliente
 - Implementación del modelo CNN 1D dual-head (`SpectralSenseCNN`) y del pipeline completo: dataset sintético de formato de producción, entrenamiento, export ONNX, `ChannelClassifier`/`SpectralOccupancyMap` de inferencia (ver §8)
 - Entrenamiento y validación end-to-end corridos sobre dataset sintético — baseline de referencia documentado en §8.5
 
@@ -613,20 +804,21 @@ sudo systemctl disable irqbalance
 
 - **F2:** Implementación del flowgraph GNU Radio completo, integración ONNX, configuración de afinidad de CPU, pruebas de banco
 - **F3:** Enlace piloto en azotea UNI, medición de link budget real, validación CNN con primarios TV
-- **F4:** Despliegue rural a 10–15 km, validación end-to-end
+- **F4:** Despliegue rural a 4 km, validación end-to-end
 - **F5:** Análisis de resultados, informe final, preparación de publicación
 
 ### Cambios respecto a la propuesta original
 
 | # | Aspecto | Original | Actualizado |
 |---|---|---|---|
-| 1 | SDR Cliente | PlutoSDR (USB 2.0) | SDR full-duplex genérico, USB 3.0, ≥30 MSPS, ADC 12 bits (modelo final por definir) |
+| 1 | SDR Cliente | PlutoSDR (USB 2.0) → luego LimeSDR Mini 2.0 (candidato, en trámite de aduana) | **bladeRF 2.0 micro xA4 — mismo modelo que el Gateway** (reemplaza al LimeSDR) |
 | 2 | Canal de control | LoRa SX1262 (915 MHz, fuera de banda) | Control in-band Opción A + protocolo de refugio |
 | 3 | LNA Gateway | No contemplado | Añadido (NF≤1 dB), margen UL: +0.9→+3.7 dB |
-| 4 | Arquitectura de antena | Full-duplex simultáneo (2 antenas) | **Full-duplex con 4 antenas LPDA dedicadas** (sin conmutador TDD) |
+| 4 | Arquitectura de antena | Full-duplex simultáneo (2 antenas) | 4 antenas LPDA dedicadas (sin conmutador TDD físico) — hardware sin cambios |
+| 4b | Esquema de duplexado (26/07/2026) | Full-duplex real (DL/UL simultáneos) | **TDD por software** (DL/UL alternan en el tiempo, TX apagado digitalmente en el slot ajeno) — el full-duplex real se descartó al no cerrar el aislamiento TX→RX requerido solo con separación de antenas; detalle en §3.1 y `claudedocs/riesgos_arquitectura_transmision.md` |
 | 5 | PC Cliente | Mini PC Intel N100 | Orange Pi 5 16 GB (hardware del equipo, ARM64) |
 | 6 | PC Gateway | Mini PC Ryzen 9 8945HS | Mini PC Intel Core Ultra 5 225 (con config. de afinidad P-core) |
-| 7 | Distancia de enlace | 15–20 km | 10–15 km (sitio confirmado + criterio conservador) |
+| 7 | Distancia de enlace | 15–20 km | 4 km (final, 28/08/2026 — antes 5–6 km desde 20/08/2026, y antes de eso 10–15 km) |
 | 8 | Duración F2/F3/F4 | 61/60/47 días | 52/50/43 días (compresión por retraso F1) |
 
 ---
@@ -651,8 +843,8 @@ sudo systemctl disable irqbalance
 | Herramienta | Versión | Uso |
 |---|---|---|
 | GNU Radio | 3.10.x | Demodulación OFDM |
-| Driver del SDR Cliente | compilado desde fuente (ARM64), específico al modelo elegido | Driver GNU Radio del SDR Cliente (p. ej. `gr-limesdr`, `gr-plutosdr`, según selección final) |
-| Herramienta de calibración del fabricante | según modelo elegido | Calibración DC offset e IQ (p. ej. LimeSuite si se selecciona un LimeSDR) |
+| gr-bladeRF | última (compilado desde fuente para ARM64) | Driver bladeRF 2.0 — mismo paquete que el Gateway |
+| libbladeRF (`bladerf_set_correction()`) | última | Calibración DC offset e IQ, nativa del bladeRF |
 | Python | ≥3.10 | Scripts de prueba y monitoreo |
 
 ### Herramientas de desarrollo
@@ -666,4 +858,4 @@ sudo systemctl disable irqbalance
 
 ---
 
-*Última actualización: junio de 2026 | Contacto: PI Galvez Legua, Mauricio Pedro — UNI FIEE-IITMC*
+*Última actualización: julio de 2026 | Contacto: PI Galvez Legua, Mauricio Pedro — UNI FIEE-IITMC*

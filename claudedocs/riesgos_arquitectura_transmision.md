@@ -352,11 +352,13 @@ datos.
 ### Por qué es un riesgo
 
 Sin pilotos reales, no hay forma de hacer estimación de canal ni
-corrección de CFO (corrimiento de frecuencia por oscilador) en un enlace
-NLOS real de 4 km (distancia final, actualizada 28/08/2026 — antes 10-15
-km) con multipath desconocido. Esto no bloquea las
-pruebas de software (Fases 1-3, sin canal real), pero sí bloquea
-cualquier prueba con SDR real (Fase 4+) que dependa de ecualización.
+corrección de CFO (corrimiento de frecuencia por oscilador) en el enlace
+real de 4 km (distancia final, actualizada 28/08/2026 — antes 10-15 km;
+LOS confirmado por estudio de sitio 05/09/2026, ya no NLOS) con multipath
+residual desconocido (menor esperado que en NLOS, pero no nulo — rebote de
+suelo/terreno, no medido). Esto no bloquea las pruebas de software (Fases
+1-3, sin canal real), pero sí bloquea cualquier prueba con SDR real (Fase
+4+) que dependa de ecualización.
 
 ### Lo que falta investigar/decidir
 

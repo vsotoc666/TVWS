@@ -42,7 +42,8 @@
 | FEC | CCSDS K=7 convolucional, tasa 1/2 (línea base) / 3/4 vía perforado del mismo código madre (oportunista) — **cerrado 05/09/2026, LDPC descartado**, ver §4.3 |
 | PA (ambos nodos) | Real: "OEM 2W 1-900MHz" clase A, P1dB >32 dBm (`SPECS EQUIPOS/PA.md`), backoff 7.5 dB → salida promedio +24.5 dBm |
 | Distancia de diseño | 4 km (final, decidida 28/08/2026 — antes 6 km/rango 5-6 km) |
-| Margen de enlace (4 km, simétrico) | BPSK +19.5 dB / QPSK +16.5 dB / 16-QAM +10.5 dB (recalculado 28/08/2026 con hojas técnicas reales de PA/antena y la distancia final de 4 km) |
+| Línea de vista | LOS confirmado por estudio de sitio (05/09/2026) — ya no se asume NLOS |
+| Margen de enlace (4 km, simétrico, LOS) | BPSK +34.5 dB / QPSK +31.5 dB / 16-QAM +25.5 dB (recalculado 05/09/2026 tras confirmar LOS por estudio de sitio; hojas técnicas reales de PA/antena y distancia final de 4 km sin cambios) |
 | Throughput esperado (planificación) | ~1.9–2.8 Mbps por dirección (QPSK) |
 | Throughput piso garantizado | ~0.92 Mbps por dirección (BPSK, refugio) |
 | Throughput techo oportunista | ~5.6 Mbps por dirección (16-QAM, no garantizado) |
@@ -258,8 +259,13 @@ completo de margen de fading):
 
 Sin cambios respecto a `README.md` §7.6: si el SNR del canal activo cae
 bajo un umbral configurable, ambos nodos saltan de forma autónoma al canal
-de refugio pre-acordado (470 MHz, mejor difracción NLOS). No requiere
-coordinación explícita — destino pre-acordado en firmware de ambos nodos.
+de refugio pre-acordado (470 MHz, menor FSPL de toda la banda TVWS del
+proyecto). No requiere coordinación explícita — destino pre-acordado en
+firmware de ambos nodos. **Nota (05/09/2026):** la razón original citada
+acá era "mejor difracción NLOS" — ya no aplica, el enlace es LOS
+confirmado por estudio de sitio (§1, §8); la elección de 470 MHz se
+mantiene por tener la menor pérdida de trayecto de la banda (470-698 MHz),
+no por difracción. Ver `README.md` §7.6 para el detalle de la corrección.
 
 ### 4.3 FEC — **✅ cerrado (05/09/2026)**
 
@@ -337,8 +343,9 @@ medición — ver punto nuevo en §8.
 
 **Por qué 7.5 dB y no el mínimo (6 dB) o el valor de trabajo inicial (5
 dB):** con margen de enlace abundante a la distancia final de 4 km, subir
-el backoff cuesta poco margen (16-QAM queda en +10.5 dB con las hojas
-técnicas reales y la distancia final) y mejora linealidad/ACPR — y de paso
+el backoff cuesta poco margen (16-QAM queda en +25.5 dB con las hojas
+técnicas reales, la distancia final y LOS confirmado por estudio de sitio)
+y mejora linealidad/ACPR — y de paso
 deja la potencia conducida a la antena (~+23.8 dBm, no depende de la
 distancia) dentro del límite legal de densidad espectral (Art. 8 del
 decreto, 12.6 dBm/100kHz) con ~6.1-6.6 dB de margen, resolviendo el
@@ -361,36 +368,51 @@ verificación completo.
 es una instantánea, no la fuente. Con el PA real (P1dB 32dBm, `SPECS
 EQUIPOS/PA.md`) ambos nodos, backoff 7.5 dB, antena real (5 dBi a 500MHz,
 `SPECS EQUIPOS/ANTENA_DIRECCIONAL`), distancia final **4 km** (decidida
-28/08/2026 — antes 6 km), NLOS 15 dB (sin revalidar a esta distancia, ver
-§8), **sin GDT** (eliminado del diseño 28/08/2026 — enlace de validación
-de solo ~3h, ver `claudedocs/estructura_fisica_instalacion.md`):
+28/08/2026 — antes 6 km), **LOS confirmado por estudio de sitio**
+(05/09/2026 — ya no se asume NLOS, ver §8), **sin GDT** (eliminado del
+diseño 28/08/2026 — enlace de validación de solo ~3h, ver
+`claudedocs/estructura_fisica_instalacion.md`):
 
-| Modo | Margen total (4 km) | Margen residual tras reservar ~10 dB para fading* | Rol |
+| Modo | Margen total (4 km, LOS) | Margen residual tras reservar ~10 dB para fading* | Rol |
 |---|---|---|---|
-| BPSK | +19.5 dB | +9.5 dB | Garantizado |
-| QPSK | +16.5 dB | +6.5 dB | Línea base esperada |
-| 16-QAM | +10.5 dB | +0.5 dB | Oportunista — margen residual apenas positivo, no confiable como modo garantizado |
+| BPSK | +34.5 dB | +24.5 dB | Garantizado |
+| QPSK | +31.5 dB | +21.5 dB | Línea base esperada |
+| 16-QAM | +25.5 dB | +15.5 dB | Ya no oportunista por margen — colchón amplio incluso reservando fading; sigue limitado por el duty cycle TDD, no por el link budget |
 
-> **Actualizado 28/08/2026:** con las hojas técnicas reales de PA/antena y
-> la distancia final de 4 km, el margen residual de 16-QAM bajo la reserva
-> de fading vuelve a ser positivo (+0.5 dB) — a 6 km con las mismas hojas
-> técnicas había quedado claramente negativo (−3.0 dB). La reducción de
-> distancia (6→4 km) recupera ~3.5 dB de FSPL, más que compensando la
-> pérdida de margen de pasar de cifras genéricas a las reales de PA/antena.
-> Aun así, +0.5 dB de margen residual es un colchón mínimo — no tratar
-> 16-QAM como un modo confiable bajo fading sin datos de campo que lo
-> respalden, aunque en el papel ya no cierre en negativo como a 6 km.
+> **Actualizado 05/09/2026 — LOS confirmado por estudio de sitio:** hasta
+> el 04/09/2026 esta tabla asumía 15 dB de pérdida NLOS sin revalidar a 4
+> km. Un estudio de sitio confirmó línea de vista despejada entre Gateway
+> y Cliente, retirando ese término del presupuesto (`LINK_BUDGET/core.py`,
+> `perdida_nlos_db` 15.0→0.0 dB por defecto) — el margen sube ~15 dB en
+> cada modulación. El margen residual de 16-QAM bajo la reserva de fading
+> pasa de +0.5 dB (colchón mínimo, snapshot 28/08/2026 con NLOS asumido) a
+> +15.5 dB — ya no es el modo "apenas cierra" que era antes. Esto no
+> cambia la reserva de fading en sí (sigue sin medir, ver nota siguiente y
+> §8 punto 3), solo el margen total contra el que se resta esa reserva.
 
-\* Los márgenes de `LINK_BUDGET/` son contra una pérdida NLOS **estática**
-(15 dB fijo), no un margen de desvanecimiento estadístico (fading rápido
-por multipath, típico en enlaces NLOS UHF fijos). No hay datos de campo
-propios todavía — los 10 dB reservados son una regla práctica común en
-enlaces NLOS UHF fijos (referencia de orden de magnitud, no cifra exacta
-del proyecto), **a validar en el piloto de azotea UNI (Fase 3)**.
+\* **Nuance a revisar, no resuelta acá:** los 10 dB reservados se
+justificaban originalmente por "fading rápido por multipath, típico en
+enlaces **NLOS** UHF fijos" — esa justificación específica ya no aplica
+tal cual, porque el enlace es LOS, no NLOS. Un enlace LOS sigue teniendo
+riesgo de fading (multipath por rebote en el suelo/terreno, efectos
+atmosféricos, fade por lluvia) pero típicamente bien menor que un NLOS.
+**No se cambia la cifra de 10 dB acá** — sigue siendo una reserva sin
+medición de campo propia (§8 punto 3) — pero la razón por la que se eligió
+ese número específico necesita re-examinarse ahora que se sabe que el
+enlace es LOS; podría ser que 10 dB sea conservador de más para un
+escenario LOS, o podría seguir siendo razonable por otras fuentes de
+fading — **no hay datos todavía para decidir eso**, solo se señala que el
+razonamiento original (multipath NLOS) ya no describe el escenario real.
+A validar junto con la medición de fading en el piloto de azotea UNI
+(Fase 3).
 
-**Conclusión operativa:** QPSK es el modo a citar como rendimiento
-"esperado", no 16-QAM — 16-QAM es techo oportunista, no línea de
-planificación, mientras no haya margen de fading medido en campo.
+**Conclusión operativa:** con LOS confirmado, los tres modos cierran con
+margen amplio incluso reservando ~10 dB de fading — QPSK sigue siendo
+razonable citar como rendimiento "esperado" por conservadurismo mientras
+no haya margen de fading medido en campo, pero 16-QAM ya no tiene el
+riesgo de margen ajustado que tenía bajo el supuesto NLOS; su límite
+práctico pasa a ser el duty cycle TDD y la política de modulación
+adaptativa de la CNN, no el link budget.
 
 ---
 
@@ -421,11 +443,26 @@ planificación, mientras no haya margen de fading medido en campo.
 
 1. **Asentamiento real del bias del PA** — sin medir en banco, bloqueante
    antes de Fase 4 (§2.2).
-2. **Pérdida NLOS de 15 dB sin revalidar a 4 km** — se arrastra del
-   análisis hecho para 10-15 km (y luego 5-6 km); el terreno real puede
-   diferir, y menos aún a la distancia final más corta.
+2. **Pérdida NLOS a 4 km — ✅ resuelto (05/09/2026)**: un estudio de sitio
+   confirmó **línea de vista (LOS) despejada** entre Gateway y Cliente a la
+   distancia final de 4 km. No era un supuesto pendiente de "revalidar a
+   una distancia distinta" — directamente no hay obstrucción NLOS que
+   modelar. `LINK_BUDGET/core.py` (`perdida_nlos_db`) pasó de 15.0 a 0.0
+   dB por defecto; margen recalculado en §1/§6. **Nuevo ítem que reemplaza
+   a este, sigue abierto:** la justificación textual de la reserva de
+   fading de ~10 dB (§6, punto 3 de esta lista) citaba específicamente
+   "multipath típico de NLOS" como motivo — con LOS confirmado, esa razón
+   específica ya no describe el escenario real (un LOS puede tener fading
+   por rebote en el suelo, clima, lluvia, pero de otra naturaleza y
+   probablemente menor magnitud que el multipath NLOS). No se decidió un
+   número nuevo — eso sigue siendo el punto 3 de abajo — solo se señala
+   que el *porqué* del número actual necesita re-examinarse.
 3. **Margen de fading estadístico no medido** — la reserva de ~10 dB (§6)
-   es una regla práctica, no una medición del sitio real.
+   es una regla práctica, no una medición del sitio real. Ver también el
+   punto 2 de arriba: la justificación original de esa cifra (multipath
+   NLOS) ya no aplica tal cual con LOS confirmado — la cifra en sí no
+   cambia hasta que haya datos de campo, pero su razonamiento de origen sí
+   quedó desactualizado y merece revisión cuando se mida.
 4. **FEC (convolucional vs. LDPC, tasa 1/2 vs 3/4) — ✅ cerrado
    (05/09/2026)**, ver §4.3: CCSDS K=7 base para los tres modos, tasa 3/4
    vía perforado del mismo código madre, LDPC explícitamente descartado.
