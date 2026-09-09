@@ -9,14 +9,28 @@ el propio README describe -- por eso antes de la IFFT hay que
 "des-centrar" con ifftshift, igual que hace `output_is_shifted=True` en
 `digital.ofdm_carrier_allocator_cvc` de GNU Radio.
 
-Nota: la posicion exacta de los ~55 subportadoras piloto NO esta fijada en
-ningun doc (README solo dice "~55 dispersas", sin indices) -- es una
-decision abierta. Esta prueba usa todos los slots de "datos + pilotos"
-como datos, sin reservar pilotos, hasta que esa decision se cierre. Por
-eso este modulo usa numpy directo en vez de
-`digital.ofdm_carrier_allocator_cvc` (que exige una tabla de pilotos
-concreta) -- asi se prueba exactamente lo que el doc SI especifica (guardas,
-control, CP) sin inventar el patron de pilotos.
+Patron de pilotos (cerrado, ver claudedocs/riesgos_arquitectura_transmision.md
+Problema 4 -- decision congelada, no re-litigar): comb-type escalonado
+(staggered), stride 8, offset = indice_simbolo % 8, igual que LTE -- el
+subconjunto de pilotos rota simbolo a simbolo para cubrir toda la grilla
+de frecuencia en un ciclo de 8 simbolos sin overhead extra. El pool logico
+"datos+pilotos" es DATOS_IDX (todo lo que no es guarda ni control, 457
+posiciones); PILOTOS_POR_OFFSET[offset] = DATOS_IDX[offset::8] son las
+posiciones piloto de ESE simbolo, y DATOS_IDX_POR_OFFSET[offset] es el
+resto (las posiciones de datos reales de ese simbolo). Hay una
+irregularidad conocida y aceptada: el espaciado del peine se ensancha de
+8 a 12 alrededor del hueco de control (#254-257), porque el peine ignora
+ese hueco -- no es un bug, no se corrige.
+
+Valores piloto: BPSK fijo, alternando +1.0/-1.0 segun la posicion del
+piloto DENTRO del simbolo (primer piloto del simbolo = +1.0, segundo =
+-1.0, etc.), deterministico e igual en ambos nodos (enlace simetrico,
+mismo firmware, sin negociacion en tiempo de ejecucion).
+
+Como la cantidad de pilotos por simbolo no es constante (58 en offset 0,
+57 en offsets 1-7), la capacidad de DATOS por simbolo tampoco lo es (399
+en offset 0, 400 en offsets 1-7) -- ya no hay un N_DATOS_POR_SIMBOLO unico
+fijo, ver N_DATOS_POR_SIMBOLO_POR_OFFSET.
 """
 import numpy as np
 
@@ -28,22 +42,55 @@ GUARDA_SUP = range(487, 512)  # 25 sub, README S5.2
 CONTROL_IDX = (254, 255, 256, 257)
 CONTROL_EVITADA = 255         # DC offset / LO leakage (README S5.2)
 
+# Pool logico "datos+pilotos": todo lo que no es guarda ni control.
 DATOS_IDX = list(range(26, 254)) + list(range(258, 487))  # 228 + 229 = 457 slots
-N_DATOS_POR_SIMBOLO = len(DATOS_IDX)
+N_DATOS_POR_SIMBOLO = len(DATOS_IDX)  # 457 -- capacidad del POOL, no de datos reales (ver *_POR_OFFSET)
+
+PILOTO_STRIDE = 8
+
+# PILOTOS_POR_OFFSET[offset] = posiciones (indices FFT) que son piloto en
+# un simbolo cuyo (indice_simbolo % 8) == offset.
+# DATOS_IDX_POR_OFFSET[offset] = el resto del pool (posiciones de datos
+# reales) para ese mismo offset.
+PILOTOS_POR_OFFSET = {off: DATOS_IDX[off::PILOTO_STRIDE] for off in range(PILOTO_STRIDE)}
+DATOS_IDX_POR_OFFSET = {
+    off: [idx for idx in DATOS_IDX if idx not in set(PILOTOS_POR_OFFSET[off])]
+    for off in range(PILOTO_STRIDE)
+}
+N_DATOS_POR_SIMBOLO_POR_OFFSET = {off: len(DATOS_IDX_POR_OFFSET[off]) for off in range(PILOTO_STRIDE)}
 
 
-def armar_simbolo_ofdm(datos_symbols: list, bits_control: tuple) -> np.ndarray:
-    """datos_symbols: hasta N_DATOS_POR_SIMBOLO simbolos I/Q (el resto se
-    rellena con 0 si faltan). bits_control: 3 bits (0/1) para #254/#256/#257
-    (BPSK: 1->+1, 0->-1). Devuelve el vector de frecuencia de 512 puntos,
-    en la convencion centrada (256 ~ DC) descrita en README S5.2."""
-    if len(datos_symbols) > N_DATOS_POR_SIMBOLO:
-        raise ValueError(f"{len(datos_symbols)} simbolos no caben en {N_DATOS_POR_SIMBOLO} slots de datos")
+def _valores_piloto(n_pilotos: int) -> list:
+    """BPSK alternado +1.0/-1.0 empezando en +1.0, determinista."""
+    return [1.0 if i % 2 == 0 else -1.0 for i in range(n_pilotos)]
+
+
+def armar_simbolo_ofdm(datos_symbols: list, bits_control: tuple, indice_simbolo: int = 0) -> np.ndarray:
+    """datos_symbols: hasta N_DATOS_POR_SIMBOLO_POR_OFFSET[offset] simbolos
+    I/Q (el resto se rellena con 0 si faltan), donde offset = indice_simbolo
+    % 8. bits_control: 3 bits (0/1) para #254/#256/#257 (BPSK: 1->+1,
+    0->-1). Las posiciones piloto de este simbolo (PILOTOS_POR_OFFSET[offset])
+    se llenan con BPSK alternado +1.0/-1.0, deterministico. Devuelve el
+    vector de frecuencia de 512 puntos, en la convencion centrada (256 ~
+    DC) descrita en README S5.2."""
+    offset = indice_simbolo % PILOTO_STRIDE
+    datos_idx = DATOS_IDX_POR_OFFSET[offset]
+    pilotos_idx = PILOTOS_POR_OFFSET[offset]
+    n_datos = len(datos_idx)
+
+    if len(datos_symbols) > n_datos:
+        raise ValueError(
+            f"{len(datos_symbols)} simbolos no caben en {n_datos} slots de datos "
+            f"(simbolo OFDM #{indice_simbolo}, offset {offset})"
+        )
     if len(bits_control) != 3:
         raise ValueError("bits_control debe tener exactamente 3 bits (#254, #256, #257)")
 
     vector = np.zeros(FFT_LEN, dtype=complex)
-    for idx, val in zip(DATOS_IDX, datos_symbols):
+    for idx, val in zip(datos_idx, datos_symbols):
+        vector[idx] = val
+
+    for idx, val in zip(pilotos_idx, _valores_piloto(len(pilotos_idx))):
         vector[idx] = val
 
     b254, b256, b257 = bits_control
@@ -69,12 +116,21 @@ def quitar_cp_y_fft(simbolo_con_cp: np.ndarray) -> np.ndarray:
 
 
 def dividir_en_simbolos_ofdm(datos_symbols: list, bits_control: tuple) -> list:
-    """Reparte una lista larga de simbolos I/Q en varios simbolos OFDM
-    (cada uno con hasta N_DATOS_POR_SIMBOLO), rellenando el ultimo con
-    ceros si no la completa. Devuelve la lista de vectores de frecuencia
-    (uno por simbolo OFDM), listos para ifft_mas_cp()."""
+    """Reparte una lista larga de simbolos I/Q en varios simbolos OFDM,
+    consumiendo en cada simbolo la capacidad de datos que le toca segun su
+    offset dentro del ciclo de pilotos de 8 (399 en offset 0, 400 en
+    offsets 1-7), rellenando el ultimo simbolo con ceros si no la
+    completa. Devuelve la lista de vectores de frecuencia (uno por simbolo
+    OFDM, con pilotos ya escritos), listos para ifft_mas_cp()."""
     simbolos = []
-    for i in range(0, len(datos_symbols), N_DATOS_POR_SIMBOLO):
-        chunk = datos_symbols[i:i + N_DATOS_POR_SIMBOLO]
-        simbolos.append(armar_simbolo_ofdm(chunk, bits_control))
+    puntero = 0
+    indice_simbolo = 0
+    n = len(datos_symbols)
+    while puntero < n:
+        offset = indice_simbolo % PILOTO_STRIDE
+        n_datos = N_DATOS_POR_SIMBOLO_POR_OFFSET[offset]
+        chunk = datos_symbols[puntero:puntero + n_datos]
+        simbolos.append(armar_simbolo_ofdm(chunk, bits_control, indice_simbolo=indice_simbolo))
+        puntero += n_datos
+        indice_simbolo += 1
     return simbolos

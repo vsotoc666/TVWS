@@ -295,8 +295,8 @@ Discone Tram 1411 (SO-239)
 |---|---|---|
 | Ancho de banda | 6 MHz | Canal TVWS estándar peruano |
 | Subportadoras totales (FFT) | 512 puntos | Resolución frecuencial adecuada |
-| Subportadoras de datos | ~420 | Resto son guardas y pilotos |
-| Subportadoras piloto | ~55 dispersas | Estimación de canal + corrección CFO |
+| Subportadoras de datos | 399 (offset 0, peor caso) / 400 (offsets 1-7) | Resto son guardas y pilotos — ver §5.2 |
+| Subportadoras piloto | 57-58 según offset (comb escalonado, stride 8) | Estimación de canal + corrección CFO — ver §5.2 |
 | Subportadoras de guarda | ~52 (26 por extremo) | Separación espectral con canales vecinos |
 | Subportadoras de control | 3 útiles (#254, #256, #257) | Campo de control in-band — Opción A |
 | Prefijo cíclico (CP) | 1/4 del símbolo (~56 µs) | Protección contra multipath |
@@ -317,6 +317,38 @@ Discone Tram 1411 (SO-239)
 Índice 258–486:  Datos + pilotos dispersos (~229 sub)
 Índice 487–511:  Banda de guarda superior (25 sub → 0+0j)
 ```
+
+**Patrón de subportadoras piloto (cerrado 07/09/2026):** comb-type
+escalonado (staggered), stride 8, igual que LTE — el subconjunto de
+pilotos rota símbolo a símbolo para cubrir toda la grilla de frecuencia
+en un ciclo de 8 símbolos sin overhead adicional de pilotos fijos.
+
+- **Pool lógico** (todo lo que no es guarda ni control, índices FFT
+  `26–253` ∪ `258–486`): 457 posiciones.
+- **Fórmula:** `offset = indice_simbolo % 8`; las posiciones piloto de
+  ese símbolo son `pool[offset::8]` (el resto del pool, ese símbolo, son
+  datos).
+- **Ejemplo concreto — offset 0** (58 pilotos, el peor caso): primeros
+  cinco índices FFT `26, 34, 42, 50, 58`; últimos tres `470, 478, 486`.
+  Datos ese símbolo: 399. Offsets 1-7 dan 57 pilotos / 400 datos cada
+  uno. La suma de pilotos de los 8 offsets es 457 — cobertura exacta del
+  pool en un ciclo de 8 símbolos, sin solape ni huecos.
+- **Valores piloto:** BPSK fijo (+1.0/−1.0), alternando según la
+  *posición del piloto dentro del símbolo* (el primero es +1.0, el
+  segundo −1.0, etc.) — no según el índice FFT absoluto. Determinista,
+  hardcodeado igual en ambos nodos (enlace simétrico, mismo firmware),
+  sin negociación en tiempo de ejecución.
+- **Irregularidad aceptada (no es bug):** el espaciado del peine se
+  ensancha de 8 a 12 subportadoras justo alrededor del hueco de control
+  (#254-257), porque el peine ignora ese hueco al calcular las
+  posiciones.
+- Para el listado exhaustivo de índices por offset (los 457×8 valores),
+  la fuente de verdad es el código:
+  `TRANSMISION/pruebas/fase2_integracion_por_pares/prueba10_ofdm_tx/ofdm_symbol.py`,
+  variables `PILOTOS_POR_OFFSET` / `DATOS_IDX_POR_OFFSET` — no se
+  duplica aquí. Detalle de por qué se decidió este patrón (y qué se
+  descartó) en `claudedocs/riesgos_arquitectura_transmision.md`,
+  Problema 4.
 
 ### 5.3 Throughput por modo
 

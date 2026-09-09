@@ -1,0 +1,53 @@
+# Especificaciones Técnicas: Nuand bladeRF 2.0 micro xA4
+
+## Especificaciones de Radiofrecuencia (RF) y Procesamiento
+* Rango de frecuencia operativa: 47 MHz a 6 GHz.
+* Tasa de muestreo máxima (Sample rate): 61.44 MHz.
+* Ancho de banda de canal máximo (RF Bandwidth): 56 MHz.
+* Arquitectura de canales: 2x2 MIMO (Múltiple Entrada Múltiple Salida) en modo Full-Duplex.
+* Transceptor RF integrado: Analog Devices AD9361.
+* Reloj del sistema (Oscilador): VCTCXO de 38.4 MHz calibrado en fábrica con una precisión de ±1 ppm.
+
+## Especificaciones de Hardware, FPGA y Energía
+* FPGA: Intel (Altera) Cyclone V con 49KLE (Elementos Lógicos) para procesamiento de señales personalizado y aceleración por hardware.
+* Microcontrolador USB: Cypress FX3 con procesador ARM9.
+* Soporte Bias-Tee: Circuito Bias-Tee de 3.3V controlado por software integrado en todos los puertos RF, capaz de suministrar energía a amplificadores LNA (como el Nooelec LaNA) o preamplificadores de antena.
+* Gestión de energía: Red de distribución de energía (PDN) con conmutación automática entre la alimentación del bus USB y la fuente DC externa.
+* Operación autónoma: Soporte para modo "headless" (sin host PC) mediante almacenamiento de la imagen FPGA en la memoria flash SPI integrada.
+
+## Puertos e Interfaces de Conexión
+* Interfaces RF: 4x conectores SMA Hembra (2x puertos TX, 2x puertos RX).
+* Interfaces de Sincronización y Reloj: 4x conectores U.FL en placa (Clock In, Clock Out, Sync In, Sync Out) para sincronización de coherencia de fase entre múltiples placas.
+* Interfaz de Datos: 1x puerto USB 3.0 SuperSpeed (Tipo B).
+* Interfaz de Energía Externa: 1x conector DC tipo Jack (5.5 mm exterior x 2.1 mm interior) para alimentación a 5V DC (requerido para uso intensivo de FPGA o Bias-Tee).
+* Expansión de Hardware: Cabezal de expansión de 32 pines para I/O de propósito general (GPIO).
+
+## Especificaciones Físicas
+* Dimensiones: 127 mm x 63.5 mm x 25.4 mm (5.0 x 2.5 x 1.0 pulgadas).
+* Peso: Aproximadamente 363 gramos (0.8 lbs).
+
+## Impairments RF del transceptor AD9361 (hoja técnica, agregado 08/09/2026)
+
+Del datasheet oficial (Analog Devices, *AD9361 Data Sheet*, Rev. G, Tabla 1,
+pág. 4-6) — no confundir con el *AD9361 Reference Manual* (UG-570), que
+describe el mecanismo de calibración pero no publica estas cifras
+numéricas.
+
+* **RX LO Leakage** (autofuga del oscilador local hacia la propia entrada
+  del receptor — la fuente del "DC offset" que contamina las
+  subportadoras cercanas al índice central del FFT en un receptor de
+  conversión directa): **−122 dBm típico** en la banda de 800 MHz (la más
+  baja que cubre el datasheet; no hay tier específico para 470-698 MHz
+  TVWS, pero es la referencia más cercana disponible). Sube a −110 dBm
+  típico a 2.4 GHz y −95 dBm típico a 5.5 GHz — a menor frecuencia el
+  leakage es menor, así que 800 MHz es una cota razonable (probablemente
+  conservadora) para la banda TVWS real.
+* **TX Carrier Leakage** (autofuga del LO hacia la salida del
+  transmisor — fenómeno relacionado pero distinto, en la cadena TX):
+  −50 dBc con 0 dB de atenuación, −32 dBc con 40 dB de atenuación (banda
+  de 800 MHz).
+* El datasheet da la **potencia total** del leakage, pero no su **ancho
+  espectral** (cuántos bins de FFT/subportadoras OFDM adyacentes quedan
+  por encima del piso de ruido) — ese dato solo se puede obtener con
+  medición en banco. Ver análisis de aplicación de esta cifra al diseño
+  OFDM en `claudedocs/riesgos_arquitectura_transmision.md`, Problema 2.

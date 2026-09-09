@@ -24,10 +24,13 @@ from ofdm_symbol import (
     CONTROL_IDX,
     CP_LEN,
     DATOS_IDX,
+    DATOS_IDX_POR_OFFSET,
     FFT_LEN,
     GUARDA_INF,
     GUARDA_SUP,
-    N_DATOS_POR_SIMBOLO,
+    N_DATOS_POR_SIMBOLO_POR_OFFSET,
+    PILOTO_STRIDE,
+    PILOTOS_POR_OFFSET,
     armar_simbolo_ofdm,
     dividir_en_simbolos_ofdm,
     ifft_mas_cp,
@@ -73,18 +76,76 @@ def test_control_en_indice_correcto(simbolos_freq):
 
 
 def test_datos_no_tocan_guardas_ni_control(simbolos_freq, simbolos_esperados):
-    """Los simbolos de datos deben caer EXACTO en DATOS_IDX, ni uno mas
-    ni uno menos, sin pisar guardas ni control."""
+    """Los simbolos de datos deben caer EXACTO en DATOS_IDX_POR_OFFSET del
+    offset de cada simbolo (indice_simbolo % 8), ni uno mas ni uno menos,
+    sin pisar guardas, control ni las posiciones piloto de ese offset."""
     ok = True
     puntero = 0
-    for vec in simbolos_freq:
-        chunk = simbolos_esperados[puntero:puntero + N_DATOS_POR_SIMBOLO]
-        for pos, idx in enumerate(DATOS_IDX):
+    for indice_simbolo, vec in enumerate(simbolos_freq):
+        offset = indice_simbolo % PILOTO_STRIDE
+        datos_idx = DATOS_IDX_POR_OFFSET[offset]
+        n_datos = len(datos_idx)
+        chunk = simbolos_esperados[puntero:puntero + n_datos]
+        for pos, idx in enumerate(datos_idx):
             esperado = chunk[pos] if pos < len(chunk) else 0j
             ok = ok and vec[idx] == esperado
-        puntero += N_DATOS_POR_SIMBOLO
+        puntero += n_datos
     return _check(
-        "simbolos de datos ubicados exacto en los slots de datos (sin pisar guardas/control)",
+        "simbolos de datos ubicados exacto en los slots de datos por-offset (sin pisar guardas/control/pilotos)",
+        ok,
+    )
+
+
+def test_pilotos_en_posiciones_correctas(offsets_a_probar=(0, 1, 3, 7)):
+    """Para varios offsets del ciclo de 8, arma un simbolo OFDM sintetico
+    (datos = ceros, para no confundir con pilotos) y verifica que las
+    posiciones piloto de PILOTOS_POR_OFFSET[offset] contengan valores
+    BPSK (+-1.0), no cero ni el patron de otro offset."""
+    ok = True
+    for offset in offsets_a_probar:
+        n_datos = N_DATOS_POR_SIMBOLO_POR_OFFSET[offset]
+        vec = armar_simbolo_ofdm([0j] * n_datos, (1, 0, 1), indice_simbolo=offset)
+        pilotos_idx = PILOTOS_POR_OFFSET[offset]
+        for idx in pilotos_idx:
+            ok = ok and vec[idx] in (1.0 + 0j, -1.0 + 0j)
+        # las posiciones piloto de otro offset NO deben coincidir 1:1 con este
+        otro_offset = (offset + 1) % PILOTO_STRIDE
+        ok = ok and set(pilotos_idx) != set(PILOTOS_POR_OFFSET[otro_offset])
+    return _check(
+        f"posiciones piloto correctas (valores BPSK) para offsets {offsets_a_probar}",
+        ok,
+    )
+
+
+def test_valores_piloto_alternan():
+    """Los valores piloto dentro de un mismo simbolo deben alternar
+    +1.0/-1.0 empezando en +1.0, en el orden ascendente de indice FFT."""
+    ok = True
+    for offset in range(PILOTO_STRIDE):
+        n_datos = N_DATOS_POR_SIMBOLO_POR_OFFSET[offset]
+        vec = armar_simbolo_ofdm([0j] * n_datos, (1, 0, 1), indice_simbolo=offset)
+        pilotos_idx = PILOTOS_POR_OFFSET[offset]
+        for pos, idx in enumerate(pilotos_idx):
+            esperado = 1.0 if pos % 2 == 0 else -1.0
+            ok = ok and vec[idx] == esperado
+    return _check(
+        "valores piloto BPSK alternan +1.0/-1.0 empezando en +1.0, en todos los offsets",
+        ok,
+    )
+
+
+def test_pilotos_mas_datos_suman_457():
+    """Para cada offset del ciclo de 8, pilotos + datos deben cubrir
+    exactamente el pool de 457 posiciones, sin solape ni faltantes."""
+    ok = True
+    for offset in range(PILOTO_STRIDE):
+        pilotos = set(PILOTOS_POR_OFFSET[offset])
+        datos = set(DATOS_IDX_POR_OFFSET[offset])
+        ok = ok and len(pilotos & datos) == 0
+        ok = ok and (pilotos | datos) == set(DATOS_IDX)
+        ok = ok and (len(pilotos) + len(datos)) == 457
+    return _check(
+        "pilotos + datos suman exactamente 457 (pool completo, sin solape) en los 8 offsets",
         ok,
     )
 
@@ -119,7 +180,8 @@ def main():
     print(f"[prueba10] {len(simbolos_bpsk)} simbolos BPSK de entrada (Prueba 9)")
 
     simbolos_freq = dividir_en_simbolos_ofdm(simbolos_bpsk, BITS_CONTROL)
-    print(f"[prueba10] repartidos en {len(simbolos_freq)} simbolos OFDM ({N_DATOS_POR_SIMBOLO} datos c/u)")
+    capacidades = ", ".join(f"offset{off}={N_DATOS_POR_SIMBOLO_POR_OFFSET[off]}" for off in range(PILOTO_STRIDE))
+    print(f"[prueba10] repartidos en {len(simbolos_freq)} simbolos OFDM (datos por-offset: {capacidades})")
 
     simbolos_tiempo = [ifft_mas_cp(v) for v in simbolos_freq]
 
@@ -130,6 +192,9 @@ def main():
         test_longitud_simbolo_y_cp(simbolos_tiempo),
         test_cp_es_copia_de_la_cola(simbolos_tiempo),
         test_round_trip_quitar_cp_y_fft(simbolos_tiempo, simbolos_freq),
+        test_pilotos_en_posiciones_correctas(),
+        test_valores_piloto_alternan(),
+        test_pilotos_mas_datos_suman_457(),
     ]
 
     total = len(resultados)

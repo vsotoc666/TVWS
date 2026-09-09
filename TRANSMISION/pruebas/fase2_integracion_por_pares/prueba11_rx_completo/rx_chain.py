@@ -9,6 +9,14 @@ conocen por el framing (tags de longitud, Prueba 7) o por un campo de
 longitud en el propio protocolo -- no adivinandolo de la estructura OFDM.
 Esta prueba recibe esos dos tamanos como parametro (n_simbolos_datos,
 n_bytes_frame_mac), igual que lo haria un `packet_len` tag real.
+
+Extrae datos usando DATOS_IDX_POR_OFFSET[indice_simbolo % 8] (patron de
+pilotos escalonado, ver ofdm_symbol.py) -- cada simbolo OFDM del ciclo de
+8 tiene un subconjunto distinto de posiciones piloto, asi que hay que
+excluir las posiciones correctas segun el offset real de CADA simbolo, no
+un DATOS_IDX fijo. No implementa ecualizacion con los pilotos todavia
+(fuera de alcance, trabajo de Fase 4) -- solo evita tratar pilotos como
+datos.
 """
 import os
 import sys
@@ -23,7 +31,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(_FASE2, "prueba10_ofdm_tx")))
 from mac_frame import MACFrameError, decapsular  # noqa: E402
 from ccsds_fec import decodificar  # noqa: E402
 from constelaciones import ESQUEMAS  # noqa: E402
-from ofdm_symbol import CONTROL_IDX, CONTROL_EVITADA, DATOS_IDX, quitar_cp_y_fft  # noqa: E402
+from ofdm_symbol import CONTROL_IDX, CONTROL_EVITADA, DATOS_IDX_POR_OFFSET, PILOTO_STRIDE, quitar_cp_y_fft  # noqa: E402
 
 _BPSK = ESQUEMAS["BPSK"]
 
@@ -44,10 +52,11 @@ def ofdm_a_frame_mac(simbolos_tiempo: list, n_simbolos_datos: int, n_bytes_frame
     datos_recuperados = []
     control_por_simbolo = []
 
-    for simbolo in simbolos_tiempo:
+    for indice_simbolo, simbolo in enumerate(simbolos_tiempo):
         vector_freq = quitar_cp_y_fft(simbolo)
         control_por_simbolo.append(extraer_control(vector_freq))
-        for idx in DATOS_IDX:
+        offset = indice_simbolo % PILOTO_STRIDE
+        for idx in DATOS_IDX_POR_OFFSET[offset]:
             datos_recuperados.append(vector_freq[idx])
 
     datos_recuperados = datos_recuperados[:n_simbolos_datos]  # descarta el relleno de ceros

@@ -1,10 +1,13 @@
 [prueba10] 896 simbolos BPSK de entrada (Prueba 9)
-[prueba10] repartidos en 2 simbolos OFDM (457 datos c/u)
-[OK] guardas (indices 0-25 y 487-511) en cero en los 2 simbolos OFDM
+[prueba10] repartidos en 3 simbolos OFDM (datos por-offset: offset0=399, offset1=400, offset2=400, offset3=400, offset4=400, offset5=400, offset6=400, offset7=400)
+[OK] guardas (indices 0-25 y 487-511) en cero en los 3 simbolos OFDM
 [OK] subportadoras de control (#254/#256/#257=BPSK del mensaje, #255 evitada=0) en su indice
-[OK] simbolos de datos ubicados exacto en los slots de datos (sin pisar guardas/control)
+[OK] simbolos de datos ubicados exacto en los slots de datos por-offset (sin pisar guardas/control/pilotos)
 [OK] cada simbolo OFDM con CP mide 512+128=640 muestras
 [OK] el CP es copia exacta de la cola del simbolo IFFT (no solo la longitud)
 [OK] round-trip (quitar CP + FFT) recupera el vector de frecuencia original
+[OK] posiciones piloto correctas (valores BPSK) para offsets (0, 1, 3, 7)
+[OK] valores piloto BPSK alternan +1.0/-1.0 empezando en +1.0, en todos los offsets
+[OK] pilotos + datos suman exactamente 457 (pool completo, sin solape) en los 8 offsets
 
-6/6 casos aprobados
+9/9 casos aprobados

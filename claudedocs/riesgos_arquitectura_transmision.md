@@ -223,14 +223,41 @@ saca al sistema de un canal ocupado por un primario de TV. Eso no es solo
 una pérdida de throughput, es una posible violación regulatoria si el
 salto de emergencia falla en el momento en que más se necesita.
 
+### Hallazgo de hoja técnica (08/09/2026) — mitad "dato de hoja técnica" resuelta, mitad "medición" sigue abierta
+
+Cifra real del datasheet del AD9361 (no del Reference Manual UG-570, que
+solo describe el mecanismo de calibración sin publicar números): **RX LO
+Leakage −122 dBm típico** en la banda de 800 MHz, referido a la entrada
+del front-end RX — la más baja que cubre el datasheet, usada como cota
+razonable para la banda TVWS real (470-698 MHz), dado que el leakage baja
+con la frecuencia (−110 dBm a 2.4 GHz, −95 dBm a 5.5 GHz). Detalle y cita
+completa en `SPECS EQUIPOS/SDR_ENLACE` — no se duplica aquí.
+
+Comparado con la señal recibida real del enlace (PRx Cliente ≈ −66.2 dBm
+a 4 km LOS, `README.md` §6.1): el leakage típico queda **~56 dB por
+debajo** de la señal deseada — en magnitud total, no es un problema.
+
+**Lo que este número NO resuelve:** es potencia total del leakage, no su
+**ancho espectral** — cuántos bins de FFT adyacentes al índice central
+quedan por encima del piso de ruido del receptor. Con ~56 dB de margen es
+probable que el único bin evitado (#255) alcance incluso si el leakage se
+esparce 1-2 bins más, pero eso sigue siendo una inferencia a partir de un
+typ de hoja técnica (no un max, no medido en el hardware real), no una
+medición. Sigue bloqueado para Fase 4 (SDR real).
+
 ### Lo que falta investigar/decidir
 
-1. Caracterizar cuánto se extiende realmente el DC leakage del SDR
-   elegido (dato de hoja técnica o medición) — puede que 1 bin de guarda
-   sea insuficiente o, al revés, más que suficiente.
+1. ~~Caracterizar cuánto se extiende realmente el DC leakage del SDR
+   elegido (dato de hoja técnica o medición)~~ — **mitad resuelta
+   (08/09/2026):** la magnitud total ya se conoce (hallazgo de arriba,
+   ~56 dB de margen). Sigue pendiente medir el **ancho espectral** real en
+   banco (Fase 4) — el dato de hoja técnica no lo cubre, y es lo único que
+   puede confirmar si 1 bin de guarda alcanza.
 2. Evaluar mover el campo de control más lejos de DC (con el costo de
    rediseñar `InbandControlTX`/`InbandControlRX`, que ya asumen los
-   índices actuales — ver `README.md` §6.3).
+   índices actuales — ver `README.md` §6.3). Con ~56 dB de margen en
+   magnitud, esto ya parece menos urgente que antes del hallazgo de
+   arriba, pero no se descarta hasta medir el ancho espectral.
 3. Evaluar redundancia adicional en el campo de control (ya hay
    repetición entre símbolos OFDM consecutivos durante el pre-anuncio,
    `README.md` línea 378 — evaluar si alcanza).
@@ -337,7 +364,7 @@ arquitectura del codec en sí.
 
 ---
 
-## Problema 4: patrón de subportadoras piloto sin definir
+## Problema 4 (✅ decisión tomada 07/09/2026 — ver abajo): patrón de subportadoras piloto sin definir
 
 ### Qué dice el diseño actual
 
@@ -360,7 +387,7 @@ suelo/terreno, no medido). Esto no bloquea las pruebas de software (Fases
 1-3, sin canal real), pero sí bloquea cualquier prueba con SDR real (Fase
 4+) que dependa de ecualización.
 
-### Lo que falta investigar/decidir
+### Lo que faltaba investigar/decidir
 
 1. Definir el patrón de pilotos (espaciado, símbolos piloto, si son fijos
    o tipo comb/block).
@@ -368,6 +395,43 @@ suelo/terreno, no medido). Esto no bloquea las pruebas de software (Fases
    `digital.ofdm_carrier_allocator_cvc` una vez definido, para heredar el
    soporte nativo de GNU Radio en vez de mantener la implementación
    `numpy` manual.
+
+### Decisión (07/09/2026)
+
+Se adoptó un patrón **comb-type escalonado (staggered), stride 8** —
+igual que LTE: el subconjunto de pilotos rota símbolo a símbolo
+(`offset = indice_simbolo % 8`) para cubrir todo el pool lógico de 457
+subportadoras (datos+pilotos, índices FFT `26-253` ∪ `258-486`) en un
+ciclo de 8 símbolos, sin overhead adicional de pilotos fijos. El
+trade-off aceptado: 57-58 pilotos por símbolo sobre un pool de 457 es
+~12-13% de overhead de pilotos, consistente con el patrón conservador ya
+usado en otras decisiones del proyecto (p.ej. el FEC del Problema 3
+arriba). Se aceptó también una irregularidad menor no considerada bug: el
+espaciado del peine se ensancha de 8 a 12 subportadoras alrededor del
+hueco de control (#254-257), porque el peine ignora ese hueco al calcular
+posiciones — el campo de control y las bandas de guarda quedan idénticos
+a como estaban, esta decisión no los toca.
+
+Detalle concreto (fórmula, conteos exactos por offset, valores piloto
+BPSK, diagrama) en `README.md` §5.1/§5.2 — no se duplica aquí.
+
+**✅ Implementado y verificado independientemente (07/09/2026):**
+`TRANSMISION/pruebas/fase2_integracion_por_pares/prueba10_ofdm_tx/ofdm_symbol.py`
+(nueva API `armar_simbolo_ofdm(..., indice_simbolo=0)`,
+`PILOTOS_POR_OFFSET`, `DATOS_IDX_POR_OFFSET`,
+`N_DATOS_POR_SIMBOLO_POR_OFFSET`), `rx_chain.py` (Prueba 11, extrae datos
+con el offset correcto por símbolo), `test_ofdm_tx.py` (Prueba 10, 9/9
+incl. 3 casos nuevos de pilotos), `test_prueba14.py` (Prueba 14,
+recalculado con el peor caso de 399 datos/símbolo, 5/5). La verificación
+independiente confirmó consistencia TX/RX (offset sensible a
+`indice_simbolo`, sin estado global que pudiera desincronizarse) corriendo
+las Pruebas 4-7, 9-11 y 13-15 sin regresión.
+
+**Explícitamente diferido, no parte de esta decisión:** migrar
+`ofdm_symbol.py` del `numpy` manual actual al bloque nativo
+`digital.ofdm_carrier_allocator_cvc` de GNU Radio (punto 2 arriba —
+queda como trabajo futuro), y la ecualización de canal real usando estos
+pilotos (eso es trabajo de Fase 4, con SDR real).
 
 ---
 
@@ -426,11 +490,14 @@ monolítico grande.
    aislamiento real de "TX apagado" y el settling real de bias del PA
    antes de Fase 4 (puntos 1 y 2 de esa sección).
 2. **Problema 2 (control cerca de DC)** — impacto de seguridad/regulatorio
-   si falla en el peor momento; barato de investigar (solo requiere datos
-   de hoja técnica o una medición corta).
-3. **Problema 4 (pilotos)** — bloquea cualquier prueba con SDR real
-   (Fase 4+), así que hay que resolverlo antes de llegar ahí, pero no es
-   urgente mientras se siga en Fases 1-3 (software puro).
+   si falla en el peor momento. **Mitad resuelta (08/09/2026):** dato de
+   hoja técnica obtenido (RX LO Leakage −122 dBm típico, ~56 dB de margen
+   bajo la señal recibida — ver hallazgo arriba y `SPECS EQUIPOS/SDR_ENLACE`).
+   Pendiente: medir el ancho espectral real en banco (Fase 4) — el
+   datasheet no lo cubre.
+3. **Problema 4 (pilotos)** — **✅ decidido e implementado (07/09/2026):**
+   comb-type escalonado stride 8, ver detalle arriba y `README.md`
+   §5.1/§5.2.
 4. **Problema 3 (FEC)** — **✅ decidido (05/09/2026):** CCSDS K=7
    convolucional base + perforado a tasa 3/4, LDPC explícitamente
    descartado — ver detalle arriba y `claudedocs/arquitectura_enlace_

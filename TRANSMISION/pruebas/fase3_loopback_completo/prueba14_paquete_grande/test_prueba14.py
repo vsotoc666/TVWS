@@ -36,7 +36,7 @@ for _p in (
 from mac_frame import MOD_BPSK, encapsular, fragmentar, reensamblar  # noqa: E402
 from ccsds_fec import codificar as fec_codificar, PAD_BYTES  # noqa: E402
 from constelaciones import ESQUEMAS, modular  # noqa: E402
-from ofdm_symbol import N_DATOS_POR_SIMBOLO, dividir_en_simbolos_ofdm, ifft_mas_cp  # noqa: E402
+from ofdm_symbol import N_DATOS_POR_SIMBOLO_POR_OFFSET, dividir_en_simbolos_ofdm, ifft_mas_cp  # noqa: E402
 from rx_chain import frame_mac_a_payload, ofdm_a_frame_mac  # noqa: E402
 
 BPSK = ESQUEMAS["BPSK"]
@@ -56,6 +56,14 @@ SIMBOLOS_POR_SLOT = 20
 # numero "redondo" simple de justificar, no una optimizacion fina.
 MARGEN_SIMBOLOS = 18
 
+# Patron de pilotos escalonado (stride 8, ver ofdm_symbol.py): la capacidad
+# de datos por simbolo OFDM ya no es constante (399 en offset 0, 400 en
+# offsets 1-7). Para el calculo conservador de max_frame_bytes se usa el
+# PEOR caso (offset 0, 399) -- así el limite de frame nunca sobreestima el
+# espacio real disponible, sin importar en que offset del ciclo de 8
+# empiece a transmitirse el frame.
+N_DATOS_PEOR_CASO = min(N_DATOS_POR_SIMBOLO_POR_OFFSET.values())
+
 
 def _check(nombre, condicion):
     estado = "OK" if condicion else "FALLO"
@@ -74,8 +82,12 @@ def max_payload_por_fragmento(presupuesto_simbolos: int) -> int:
         frame_mac_bytes = payload_bytes + MAC_OVERHEAD_BYTES
         n_simbolos = ceil(coded_bits / N_DATOS_POR_SIMBOLO)
 
-    Se despeja el maximo payload_bytes tal que n_simbolos <= presupuesto_simbolos."""
-    max_frame_bytes = (presupuesto_simbolos * N_DATOS_POR_SIMBOLO) // 16 - PAD_BYTES
+    Se despeja el maximo payload_bytes tal que n_simbolos <= presupuesto_simbolos.
+
+    Usa N_DATOS_PEOR_CASO (399, offset 0 del patron de pilotos escalonado)
+    en vez de una capacidad fija -- ver comentario junto a N_DATOS_PEOR_CASO
+    mas arriba."""
+    max_frame_bytes = (presupuesto_simbolos * N_DATOS_PEOR_CASO) // 16 - PAD_BYTES
     return max_frame_bytes - MAC_OVERHEAD_BYTES
 
 
@@ -101,7 +113,7 @@ PAYLOAD_GRANDE = bytes((i * 37 + 11) % 256 for i in range(1400))
 
 def main():
     print(f"[prueba14] payload de prueba: {len(PAYLOAD_GRANDE)} bytes")
-    print(f"[prueba14] capacidad de un simbolo OFDM: {N_DATOS_POR_SIMBOLO} bits codificados")
+    print(f"[prueba14] capacidad de un simbolo OFDM (peor caso, offset 0): {N_DATOS_PEOR_CASO} bits codificados")
     print(f"[prueba14] presupuesto de slot TDD: {SIMBOLOS_POR_SLOT} simbolos (~1.78 ms), umbral de corte usado: {MARGEN_SIMBOLOS} simbolos")
 
     max_payload = max_payload_por_fragmento(MARGEN_SIMBOLOS)
