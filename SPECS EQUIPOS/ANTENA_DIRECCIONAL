@@ -1,0 +1,23 @@
+# Especificaciones Técnicas: Antena PCB Log Periódica WA5VJB
+
+## Especificaciones de Radiofrecuencia (RF)
+* Rango de frecuencia operativa: 400 MHz a 1000 MHz.
+* Ganancia: 5 dBi a 500 MHz.
+* Pérdida de retorno (S22): Alcanza -8.220 dB a 418 MHz. Registra -11.8 dB a 1 GHz.
+* Factores de Antena Típicos:
+  * 400 MHz: 18.8
+  * 450 MHz: 17.7
+  * 500 MHz: 18.2
+  * 600 MHz: 19.8
+  * 700 MHz: 21.2
+  * 800 MHz: 22.3
+  * 900 MHz: 23.3
+  * 1000 MHz: 24.2
+  * 1050 MHz: 24.7
+
+## Especificaciones Físicas y de Montaje
+* Diseñador: WA5VJB.
+* Material del sustrato: Fibra de vidrio (Fiberglas).
+* Interfaz de conexión RF: Admite el montaje de un conector SMA estándar para PCB. Alternativamente, el cable coaxial se puede soldar directamente a la antena.
+* Enrutamiento del cable: El cable coaxial debe guiarse a lo largo del "Boom" de la antena. También puede enrutarse a 90 grados con respecto a la antena.
+* Perforaciones de montaje: Los agujeros de montaje se pueden taladrar a través de la fibra de vidrio. Estos deben ubicarse entre los elementos, cerca de la parte posterior de la antena.

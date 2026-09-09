@@ -1,0 +1,16 @@
+# Especificaciones Técnicas: Antena Base Tram 1411 Discone
+
+## Especificaciones de Radiofrecuencia (RF)
+* Rango de frecuencia de recepción: Cobertura continua desde 25 MHz hasta 1300 MHz.
+* Bandas de transmisión soportadas: 26 MHz, 27 MHz, 46 MHz, 49 MHz, 72 MHz, 144 MHz, 220 MHz, 440 MHz, 900 MHz y 1290 MHz.
+* Manejo de potencia máxima: 300 Watts para frecuencias CB y 200 Watts para frecuencias VHF-UHF.
+* Relación de Onda Estacionaria (SWR): 1.5:1 como máximo.
+* Interfaz de conexión RF: Conector UHF Hembra (SO-239).
+
+## Especificaciones Físicas y de Montaje
+* Diseño: Antena base tipo Discone de banda ancha.
+* Material de construcción: Estructura completamente de acero inoxidable a prueba de óxido.
+* Radiales superiores: 8 elementos con una longitud de 26 cm (10.5 pulgadas).
+* Radiales inferiores: 6 elementos fijos de 81 cm (32 pulgadas) y 2 elementos ajustables de 122 cm a 132 cm (48 a 52 pulgadas).
+* Látigo superior (Top whip): 139 cm (55 pulgadas) de longitud.
+* Diámetro de montaje: Diseñada para instalarse en mástiles con un diámetro máximo de 35 mm (1 3/8 pulgadas).

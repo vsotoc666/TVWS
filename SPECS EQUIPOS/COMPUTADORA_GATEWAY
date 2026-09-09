@@ -1,0 +1,27 @@
+# Especificaciones Técnicas: Unidad Central de Proceso (CPU) - Estación de Trabajo
+
+## Procesamiento y Memoria
+* Procesador: 10 a 20 núcleos, o equivalente o superior.
+* Frecuencia de procesador: Frecuencia base de 2.0 a 3.3 GHz y frecuencia turbo de 4.0 a 4.9 GHz.
+* Memoria RAM: 32 GB DDR5 o equivalente o superior.
+
+## Almacenamiento y Video
+* Almacenamiento: 1 TB SSD o equivalente o superior.
+* Video: Integrado o superior.
+
+## Puertos y Conectores
+* Puertos USB: (2) Puerto USB 3.0, (1) Puerto USB Tipo C, (2) Puerto USB 3.0 adicionales y (2) Puerto USB 2.0.
+* Puertos de red: (1) Puerto RJ-45.
+* Puertos de video: (1) DisplayPort y (1) HDMI.
+* Puertos de audio: (1) Line in, (1) Mic in y (3) Conectores de Audio Jacks.
+* Audio integrado: Parlante Incorporado con Audio HD.
+
+## Ranuras de Expansión y Conectividad
+* Ranuras PCI-Express: (1) PCI-Express 5.0 y (1) PCI-Express 4.0.
+* Ranuras de almacenamiento interno: (2) Puerto M. 2.
+* Conectividad de red: LAN con velocidad de 10/100/1000/2500 Mbs.
+
+## Energía, Formato y Periféricos
+* Fuente de poder: 300 a 500 W con certificación 80 Plus Bronze o equivalente o superior.
+* Formato físico: Small form Factor, Mid Tower o Full Tower.
+* Periféricos a incluir: Teclado USB y Mouse óptico USB.
