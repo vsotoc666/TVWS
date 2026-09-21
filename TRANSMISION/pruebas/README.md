@@ -59,6 +59,17 @@ bladeRF/SDR Cliente) están en el plan pero requieren hardware que todavía
 no ha llegado — ver `claudedocs/arquitectura_transmision_datos.md` para la
 tabla completa.
 
+## Estado — Fase 4a (banco cableado full-duplex, sin LNA/PA) — 🟡 diseño en curso, sin hardware
+
+Línea de pruebas alternativa (no reemplaza la Fase 4/5 del plan original,
+las desarrolla en detalle) — ver
+[`claudedocs/brief_pruebas_banco_cableado_fullduplex.md`](../../claudedocs/brief_pruebas_banco_cableado_fullduplex.md)
+para la motivación completa y la tabla de 8 sub-pruebas (4a-1 a 4a-8).
+
+| # | Prueba | Carpeta | Estado |
+|---|--------|---------|--------|
+| 4a-1 | Aislamiento intra-chip TX1→RX1 (mismo bladeRF, sin cable cruzado) | [`fase4a_banco_cableado_fd/prueba4a1_aislamiento_intrachip`](fase4a_banco_cableado_fd/prueba4a1_aislamiento_intrachip/) | 🟡 Diseñada y auto-validada en software (`--simular`, sin hardware) 13/09/2026 — pendiente de correr con bladeRF real |
+
 ## Nota operativa: `tun0` no sobrevive un reboot
 
 `ip tuntap add ... mode tun user $USER` crea una interfaz con el flag

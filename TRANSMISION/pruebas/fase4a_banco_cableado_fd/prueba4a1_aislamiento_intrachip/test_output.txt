@@ -1,0 +1,9 @@
+Aislamiento TX1->RX1 intra-chip: 55.0 dB
+
+Referencia (claudedocs/riesgos_arquitectura_transmision.md, Problema 1): el full-duplex real por antena se descartó porque el aislamiento requerido (~90-110 dB) superaba por mucho el disponible por separación de antena (~30-50 dB). Comparar el número de arriba contra ese rango de 90-110 dB para saber si la hipótesis del brief (banco cableado sí permite full-duplex real, claudedocs/brief_pruebas_banco_cableado_fullduplex.md §2) se sostiene.
+
+✅ Caso 'detectado': OK (aislamiento recuperado 55.0 dB, esperado ~55 dB)
+✅ Caso 'no detectado' (cota inferior): OK
+✅ Guardrail tx_gain_db distinta: OK (rechazado correctamente)
+
+Todas las autopruebas (modo --simular, sin hardware) pasaron.
