@@ -86,7 +86,7 @@ distintas con entornos distintos, no una contradicción entre docs.**
 Windows, Python 3.11/3.12, CPU-only (no CUDA/ROCm available locally). A `venv/` virtualenv lives at the repo root (gitignored).
 
 ```bash
-pip install -r requirements.txt
+pip install -r IA/requirements.txt
 ```
 
 On Windows, `torch.onnx.export`'s dynamo exporter prints Unicode checkmarks that crash the default cp1252 console — `entrenamiento.py` reconfigures `sys.stdout` to UTF-8 at import time to avoid this; if you invoke torch.onnx export from a new entry point, do the same.
