@@ -35,12 +35,12 @@ El proyecto implementa un enlace de radio cognitiva punto a punto para llevar co
 │  ◄── ESTE MÓDULO CORRE AQUÍ ──►     │
 │  CNN + CognitiveEngine              │
 └─────────────┬────────────────────────┘
-              │ Enlace OFDM 6 MHz full-duplex (datos), 10-15 km
+              │ Enlace OFDM 6 MHz full-duplex (datos), 4 km
               │ Control in-band: subportadoras OFDM #254/256/257
               │ (sin canal fuera de banda — LoRa eliminado del diseño)
 ┌─────────────▼────────────────────────┐
 │      NODO CLIENTE                    │
-│  LimeSDR Mini 2.0 — solo demodula    │
+│  bladeRF 2.0 xA4 — solo demodula     │
 │  Sin IA — ejecuta órdenes de salto   │
 └────────────────────────────────────────┘
 ```
@@ -89,7 +89,6 @@ Dense(64) → ReLU → Dropout(0.3)  [tronco compartido]
 | Cabeza de margen además de ocupación | El `CognitiveEngine` tiene una política `max_margin`; P(ocupado) cerca de 0 no distingue cuál canal libre está más limpio (todos saturan igual). El margen estimado en dB sí da un valor continuo comparable, casi sin costo extra de parámetros por compartir el backbone |
 | Sin Sigmoid en el forward | `BCEWithLogitsLoss` es numéricamente más estable; Sigmoid se aplica solo en inferencia |
 
-El documento completo de arquitectura, con el razonamiento capa por capa y los cálculos de campo receptivo, está en [`arquitectura_ia_tvws.md`](arquitectura_ia_tvws.md) (parcialmente desactualizado respecto a la cabeza de margen — el razonamiento de los 3 bloques convolucionales sigue vigente).
 
 ---
 
@@ -197,8 +196,7 @@ Cada etapa corre en su propio thread Python dentro de un único proceso en el Ga
 ```
 IA/
 ├── README.md                      # este archivo
-├── arquitectura_ia_tvws.md        # arquitectura completa, capa por capa
-├── pipeline_dataset_v2.md         # pipeline de recolección y construcción del dataset
+├── pipeline_dataset_v2.md         # pipeline de recolección y construcción del dataset (captura real RTL-SDR)
 │
 ├── nucleo.py                      # constantes, preprocesamiento PSD, modelo (SpectralSenseCNN), pérdidas
 ├── inferencia.py                  # ChannelClassifier (ONNX, por sub-banda) + SpectralOccupancyMap
@@ -297,16 +295,26 @@ print(mapa.mapa_actual()["libres_por_indice"])   # ej: [14, 17, 21]
 
 ## Métricas del modelo
 
-El modelo cambió de una sola cabeza (9 logits) a backbone compartido + cabeza dual (ocupación + margen) — las métricas de la cabeza de ocupación deberían ser comparables a las de la arquitectura anterior, pero **están pendientes de re-medición sobre un entrenamiento completo** tras este cambio (no sobre las 3 épocas usadas para validar que el pipeline corre sin errores). Reemplazar esta sección con el resultado de:
+Baseline completo ya corrido (35 épocas, 6,000 sub-bandas sintéticas de `generar_dataset_sintetico.py`, formato de producción con ambas cabezas etiquetadas) — resultado detallado y su interpretación en `README.md` §8.5 (raíz del repo, fuente canónica de esta cifra, no duplicar el número aquí si se vuelve a re-entrenar):
+
+| Métrica | Resultado |
+|---|---|
+| AUC-ROC global (test) | 0.8815 |
+| F1(β=2) @ umbral de campo 0.20 | 0.8014 |
+| Sensibilidad @ 0.20 (detección de primarios) | 98.5% |
+| Especificidad @ 0.20 | 45.3% |
+| Latencia ONNX Runtime (CPU) | 0.089 ms media, 0.135 ms P99 |
+
+El umbral operativo (`UMBRAL_LIBRE = 0.20`, no 0.5) está elegido deliberadamente para minimizar falsos negativos: en radio cognitiva, declarar "libre" un canal que en realidad tiene un primario activo es un error regulatorio grave, mientras que declarar "ocupado" un canal libre solo cuesta eficiencia espectral.
+
+> Estas métricas son sobre dataset **sintético** — validan el pipeline (arquitectura, entrenamiento, export ONNX, latencia), no el desempeño en campo. Pendiente: captura de dataset real (Fase 1, ver `pipeline_dataset_v2.md`) y re-entrenamiento/fine-tuning sobre esos datos antes de tratar estas cifras como desempeño operativo.
+
+Para re-correr el baseline (por ejemplo tras un cambio de arquitectura):
 
 ```bash
 python entrenamiento.py --modo entrenar --dataset ./dataset_v2 --epocas 80
 python evaluar_modelo.py --dataset ./dataset_v2 --checkpoint ./modelos/mejor_modelo.pt --onnx ./modelos/spectral_sense.onnx
 ```
-
-El umbral operativo (`UMBRAL_LIBRE = 0.20`, no 0.5) está elegido deliberadamente para minimizar falsos negativos: en radio cognitiva, declarar "libre" un canal que en realidad tiene un primario activo es un error regulatorio grave, mientras que declarar "ocupado" un canal libre solo cuesta eficiencia espectral.
-
-> Estas métricas son sobre dataset **sintético**. Pendiente: validación con dataset real capturado en Fase 1 (ver `pipeline_dataset_v2.md`).
 
 ---
 

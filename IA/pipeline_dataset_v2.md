@@ -2,6 +2,13 @@
 > Documento técnico de referencia — Radio Cognitiva TVWS, UNI 2024–2026.
 > Fase 1: 18/05/2026 → 15/06/2026. Responsable: Franco Rafael Espinoza.
 > **Revisión v2:** hardware actualizado con equipos reales confirmados del equipo.
+> **Nota de mantenimiento:** las specs de PC Gateway/Cliente de la sección 1
+> se corrigieron para reflejar el hardware final (el historial completo de
+> por qué cambiaron vive en `README.md` §12, tabla de cambios — no se repite
+> aquí). Los snippets de código se actualizaron para importar de
+> `nucleo.py`/`inferencia.py`/`entrenamiento.py`, el módulo actual — el
+> archivo `spectral_sense.py` que este doc citaba originalmente ya no
+> existe, fue dividido (ver `CLAUDE.md`, "Module split").
 
 ---
 
@@ -15,10 +22,9 @@
 | Antena discone 25–1300 MHz | Recepción espectral omnidireccional | Disponible desde día 1 |
 | PC escritorio Ryzen 7 7700x + RX 580 2048SP 8GB | Captura, preprocesamiento y **entrenamiento (CPU)** | Equipo personal del equipo, no RNP |
 | Google Colab Pro (T4 GPU) | Entrenamiento CNN si GPU local no es viable | ~$10 USD/mes |
-| bladeRF 2.0 xA4 | SDR Gateway (Fase 2 en adelante) | Pendiente de aduana, 4–8 semanas |
-| LimeSDR Mini 2.0 | SDR Cliente (Fase 2 en adelante) | Pendiente de aduana, 4–8 semanas |
-| Orange Pi 5 8GB | Nodo cliente (reemplaza Mini PC N100) | Confirmar modelo exacto |
-| Mini PC Ryzen 9 8945HS | Nodo Gateway | Pendiente de compra RNP |
+| bladeRF 2.0 xA4 (×2) | SDR Gateway + SDR Cliente (Fase 2 en adelante) | Pendiente de aduana, 4–8 semanas |
+| Orange Pi 5 16GB | Nodo cliente (reemplaza Mini PC N100) | Confirmado |
+| Mini PC Intel Core Ultra 5 225 | Nodo Gateway (reemplaza Ryzen 9 8945HS) | Seleccionado — ver `README.md` §12 |
 
 ### 1.2 Restricción crítica: RX 580 2048SP y PyTorch
 
@@ -34,16 +40,16 @@ La RX 580 2048SP es una GPU basada en el chip **Polaris 20 recortado (gfx803)**.
 
 ### 1.3 Cambio de nodo cliente: Orange Pi vs Mini PC N100
 
-| Criterio | Mini PC N100 (descartado) | Orange Pi 5 8GB (adoptado) |
+| Criterio | Mini PC N100 (descartado) | Orange Pi 5 16GB (adoptado) |
 |---|---|---|
 | Arquitectura | x86_64 | ARM64 (RK3588) |
-| gr-limesdr instalación | `apt install` directo | Compilar desde fuente |
+| gr-bladeRF instalación | `apt install` directo | Compilar desde fuente |
 | GNU Radio 3.10 | Paquete apt disponible | Compilar desde fuente o PPA ARM |
 | Rendimiento SDR (12 MSPS) | Verificado en x86 | Requiere verificación en Fase 2 |
 | Consumo energético | ~15–25W | ~8–12W (ventaja en campo) |
 | Precio | S/ 550–720 | Menor costo |
 
-**Tarea adicional en Fase 2:** Compilar gr-limesdr y GNU Radio 3.10 en la Orange Pi. Reservar al menos 3–5 días de trabajo para esto. Si la compilación falla o el rendimiento es insuficiente para 12 MSPS sostenidos, escalar a una Orange Pi 5 Pro o reintroducir el N100.
+**Tarea adicional en Fase 2:** Compilar gr-bladeRF y GNU Radio 3.10 en la Orange Pi (el SDR Cliente pasó de LimeSDR Mini 2.0 a un segundo bladeRF 2.0 micro xA4 — mismo modelo que el Gateway, mismo driver). Reservar al menos 3–5 días de trabajo para esto. Si la compilación falla o el rendimiento es insuficiente para 12 MSPS sostenidos, escalar a una Orange Pi 5 Pro o reintroducir el N100.
 
 ---
 
@@ -195,7 +201,7 @@ if __name__ == "__main__":
 
 ```python
 import numpy as np
-from spectral_sense import calcular_psd
+from nucleo import calcular_psd
 
 def etiquetar_canal(iq: np.ndarray,
                     margen_db: float = 10.0) -> tuple[int, float]:
@@ -234,7 +240,7 @@ import matplotlib.pyplot as plt
 
 def visualizar_muestra(ruta_iq: str, etiqueta: int, margen_db: float):
     """Grafica PSD para verificación manual de etiqueta."""
-    from spectral_sense import calcular_psd
+    from nucleo import calcular_psd
     iq    = np.load(ruta_iq).astype(np.complex64)
     psd   = calcular_psd(iq)
     freqs = np.linspace(-1.2, 1.2, len(psd))
@@ -276,7 +282,7 @@ def visualizar_muestra(ruta_iq: str, etiqueta: int, margen_db: float):
 ### 5.1 Pipeline I/Q → PSD normalizado
 
 ```python
-from spectral_sense import calcular_psd, normalizar_psd
+from nucleo import calcular_psd, normalizar_psd
 
 def procesar_muestra(ruta_iq: str, n_fft: int = 512) -> np.ndarray:
     """
@@ -359,7 +365,7 @@ La RX 580 2048SP usa el chip Polaris 20 (arquitectura GCN 4.0, target `gfx803`).
 | **1 (preferida)** | Google Colab Pro — T4 GPU | 3–8 minutos | Siempre disponible |
 | **2** | PC Ryzen 7 7700x — CPU puro | 15–40 minutos | Viable para modelos pequeños |
 | **3 (intentar)** | RX 580 con ROCm 5.x + PyTorch 1.13 | Variable | Probar, no garantizado |
-| **4 (Fase 2+)** | Mini PC Ryzen 9 8945HS — ONNX DirectML | Solo inferencia | No para entrenamiento |
+| **4 (Fase 2+)** | Mini PC Intel Core Ultra 5 225 — ONNX OpenVINO/CPU | Solo inferencia | No para entrenamiento |
 
 **Recomendación práctica para Fase 1:**
 - Usar el Ryzen 7 7700x para captura, preprocesamiento y construcción del dataset
@@ -390,7 +396,7 @@ Si `torch.cuda.is_available()` retorna `False`, usar el CPU del Ryzen 7 o Colab.
 ### 6.4 Configuración de entrenamiento en CPU (Ryzen 7 7700x)
 
 ```python
-# En spectral_sense.py, el entrenamiento en CPU funciona sin cambios.
+# En entrenamiento.py, el entrenamiento en CPU funciona sin cambios.
 # El Ryzen 7 7700x (8C/16T, 5.4 GHz boost) es suficiente para el modelo de 107K params.
 
 # Ajuste recomendado para CPU:
@@ -425,7 +431,7 @@ Uso:
 """
 import os, json, random, argparse
 import numpy as np
-from spectral_sense import calcular_psd, normalizar_psd
+from nucleo import calcular_psd, normalizar_psd
 
 POSICIONES_BARRIDO = [
     {"centro_mhz": 498, "canales_globales": list(range(14, 23))},
@@ -621,7 +627,7 @@ Si el balance de clases resulta inferior al 20% de "ocupado", capturar sesiones 
 - [ ] RTL-SDR V4 verificado con `rtl_test -t` (sin overflow de muestras a 2.4 MSPS)
 - [ ] Antena discone instalada correctamente (≥60 cm de bordes, exterior)
 - [ ] `pyrtlsdr` instalado y probado en el PC Ryzen 7 7700x
-- [ ] `spectral_sense.py` verificado con `python spectral_sense.py --modo test`
+- [ ] `entrenamiento.py` verificado con `python entrenamiento.py --modo test`
 - [ ] Intentado ROCm 5.7 en RX 580 — resultado documentado
 
 ### Captura
@@ -642,8 +648,8 @@ Si el balance de clases resulta inferior al 20% de "ocupado", capturar sesiones 
 
 ### Nodo cliente (tarea de Fase 2 — identificada en Fase 1)
 - [ ] Orange Pi encendida con Ubuntu 22.04 ARM64
-- [ ] Plan de compilación de GNU Radio 3.10 + gr-limesdr documentado
-- [ ] Reservar 3–5 días de Fase 2 para compilación y prueba de gr-limesdr en ARM
+- [ ] Plan de compilación de GNU Radio 3.10 + gr-bladeRF documentado
+- [ ] Reservar 3–5 días de Fase 2 para compilación y prueba de gr-bladeRF en ARM
 
 ---
 
