@@ -205,12 +205,17 @@ IA/
 ├── evaluar_modelo.py              # evaluación: ROC, matriz de confusión, benchmark de latencia
 ├── analizar_entrenamiento.py      # gráficas de loss/AUC/F1 desde historial.json
 │
+├── herramientas/
+│   ├── escanear_tvws.sh           # barrido ancho (rtl_power) + captura I/Q puntual (rtl_sdr) con el NESDR SMArt v5
+│   ├── analizar_barrido.py        # mapea un barrido a los 39 canales del proyecto (14-52), QA de ocupación
+│   └── etiquetar_rnf.py           # etiqueta capturas .iq contra un export manual del RNF -> .npz (formato TVWSDataset)
+│
 ├── dataset/                       # (real, Fase 1) train/val/test en .npz — formato per-canal
 ├── modelos/                       # (generado) checkpoints .pt y modelo .onnx
 └── graficas/                      # (generado) gráficas de evaluación y entrenamiento
 ```
 
-No hay `captura_sesion.py`/`setup_entorno.sh`/`docs/` todavía — son trabajo pendiente de Fase 1 (captura real con RTL-SDR), no scripts ya implementados.
+`IA/herramientas/escanear_tvws.sh` es una herramienta de caracterización/sanity-check del entorno RF real (no el pipeline completo de construcción de dataset etiquetado) — ver uso rápido §5. `captura_dataset.py`/`construir_dataset.py` (el pipeline completo descrito en `pipeline_dataset_v2.md`, con etiquetado contra el RNF) siguen sin implementarse.
 
 ---
 
@@ -270,9 +275,26 @@ Genera curvas ROC por canal, matriz de confusión, distribución de probabilidad
 python analizar_entrenamiento.py --historial ./modelos/historial.json
 ```
 
-### 5. Captura real con RTL-SDR (Fase 1, recolección de dataset)
+### 5. Captura real con RTL-SDR
 
-Pendiente — protocolo definido en `pipeline_dataset_v2.md`, script aún no implementado.
+Caracterización/sanity-check del entorno RF (barrido de banda ancha + captura I/Q puntual), con parámetros ya elegidos para el NESDR SMArt v5 y la banda de 39 canales del proyecto (14-52, 470-704 MHz):
+
+```bash
+IA/herramientas/escanear_tvws.sh scan              # barrido completo de la banda, genera tabla por canal + gráfica
+IA/herramientas/escanear_tvws.sh iq -c 24 -d 1      # captura I/Q de 1s centrada en el canal 24
+```
+
+Ver cabecera de `escanear_tvws.sh` para la justificación de cada parámetro por defecto (rango, bin, ganancia, recorte de bordes).
+
+Para etiquetar esas capturas contra el RNF del MTC (fuente primaria de la etiqueta, el detector de energía sólo es cruce de QA):
+
+```bash
+python IA/herramientas/etiquetar_rnf.py --generar-plantilla-rnf rnf_mi_distrito.csv   # completar a mano desde rnf.mtc.gob.pe/Television
+python IA/herramientas/etiquetar_rnf.py --capturas ~/tvws_capturas --rnf rnf_mi_distrito.csv \
+    --qa ~/tvws_capturas/scan_..._canales.csv --salida ./dataset_real/etiquetado
+```
+
+Produce un `.npz` por captura en el formato exacto que `entrenamiento.TVWSDataset` espera. Esto **no** arma train/val/test ni hace el split por sesión — eso sigue pendiente (`construir_dataset.py`, protocolo completo en `pipeline_dataset_v2.md`).
 
 ### 6. Inferencia en campo (uso en producción dentro del Gateway)
 
@@ -295,19 +317,19 @@ print(mapa.mapa_actual()["libres_por_indice"])   # ej: [14, 17, 21]
 
 ## Métricas del modelo
 
-Baseline completo ya corrido (35 épocas, 6,000 sub-bandas sintéticas de `generar_dataset_sintetico.py`, formato de producción con ambas cabezas etiquetadas) — resultado detallado y su interpretación en `README.md` §8.5 (raíz del repo, fuente canónica de esta cifra, no duplicar el número aquí si se vuelve a re-entrenar):
+Baseline con pooling posicional (Conv1d 1x1 por canal en vez de GlobalAveragePool + Linear compartido) ya corrido (80 épocas máx., early stopping en la 18, 6,000 sub-bandas sintéticas de `generar_dataset_sintetico.py`, formato de producción con ambas cabezas etiquetadas) — resultado detallado y su interpretación en `README.md` §8.5 (raíz del repo, fuente canónica de esta cifra, no duplicar el número aquí si se vuelve a re-entrenar):
 
 | Métrica | Resultado |
 |---|---|
-| AUC-ROC global (test) | 0.8815 |
-| F1(β=2) @ umbral de campo 0.20 | 0.8014 |
-| Sensibilidad @ 0.20 (detección de primarios) | 98.5% |
-| Especificidad @ 0.20 | 45.3% |
-| Latencia ONNX Runtime (CPU) | 0.089 ms media, 0.135 ms P99 |
+| AUC-ROC global (test) | 1.0000 |
+| F1(β=2) @ umbral de campo 0.20 | 0.9871 |
+| Sensibilidad @ 0.20 (detección de primarios) | 98.39% |
+| Especificidad @ 0.20 | 100.00% |
+| Latencia ONNX Runtime (CPU) | 0.562 ms media, 0.630 ms P99 |
 
 El umbral operativo (`UMBRAL_LIBRE = 0.20`, no 0.5) está elegido deliberadamente para minimizar falsos negativos: en radio cognitiva, declarar "libre" un canal que en realidad tiene un primario activo es un error regulatorio grave, mientras que declarar "ocupado" un canal libre solo cuesta eficiencia espectral.
 
-> Estas métricas son sobre dataset **sintético** — validan el pipeline (arquitectura, entrenamiento, export ONNX, latencia), no el desempeño en campo. Pendiente: captura de dataset real (Fase 1, ver `pipeline_dataset_v2.md`) y re-entrenamiento/fine-tuning sobre esos datos antes de tratar estas cifras como desempeño operativo.
+> Estas métricas son sobre dataset **sintético** — validan el pipeline (arquitectura, entrenamiento, export ONNX, latencia), no el desempeño en campo. Pendiente: captura de dataset real (Fase 1, ver `pipeline_dataset_v2.md`) y re-entrenamiento/fine-tuning sobre esos datos antes de tratar estas cifras como desempeño operativo. El AUC=1.0000/especificidad=100% son sospechosamente perfectos — con el offset del canal 0 ahora fijo (ver `generar_dataset_sintetico.py`), cada canal cae en un rango de bins determinista, lo que puede estar facilitando la tarea sintética más de lo que una señal real facilitaría. Ver `README.md` §8.5 (raíz) para el detalle de esta lectura crítica.
 
 Para re-correr el baseline (por ejemplo tras un cambio de arquitectura):
 
@@ -326,7 +348,7 @@ python evaluar_modelo.py --dataset ./dataset_v2 --checkpoint ./modelos/mejor_mod
 - [x] Dataset sintético v2 (formato de sub-banda completa, igual al de campo, con etiqueta de margen)
 - [x] `SpectralOccupancyMap`: agregación de 5 sub-bandas en mapa de 39 canales con timestamp por canal
 - [x] Eliminación de LoRa: inferencia usa OpenVINO/CPU, sin ninguna dependencia de transporte de control
-- [ ] Re-entrenamiento completo y medición de métricas con la arquitectura de cabeza dual
+- [x] Re-entrenamiento completo y medición de métricas con pooling posicional (corrige la atribución canal-logit que la cabeza dual original, con GlobalAveragePool, no garantizaba)
 - [ ] Captura de dataset real con RTL-SDR V4 en Lima (Fase 1)
 - [ ] Re-entrenamiento y validación con dataset real
 - [ ] Integración con `CognitiveEngine` (Fase 2) — política de selección, canal refugio, control in-band

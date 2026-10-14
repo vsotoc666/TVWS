@@ -171,20 +171,36 @@ class SpectralSenseCNN(nn.Module):
             nn.Conv1d(64, 128, kernel_size=5, padding=2),
             nn.BatchNorm1d(128),
             nn.ReLU(inplace=True)
-            # Sin MaxPool: conserva resolución para GlobalAveragePool
+            # Sin MaxPool: conserva resolución espacial para el pooling
+            # posicional (por-canal) que sigue, no un GlobalAveragePool
         )
 
-        self.gap = nn.AdaptiveAvgPool1d(1)   # 128 x 128 -> (128,)
+        # Pooling posicional (NO global): en vez de colapsar los 128
+        # posiciones espaciales de bloque3 a UN solo vector compartido por
+        # los 9 canales de salida (lo que dejaba a la capa final sin forma
+        # de saber "esta salida corresponde a esta región del espectro"),
+        # cada una de las 9 salidas obtiene su propio promedio local sobre
+        # ~14 bins de bloque3 (128 bins / 9 ≈ el ancho de un canal TVWS tras
+        # dos MaxPool). Esto preserva la correspondencia posicional
+        # canal_i <-> segmento_i que generar_dataset_sintetico.py codifica
+        # en las etiquetas.
+        self.pool_posicional = nn.AdaptiveAvgPool1d(n_canales_salida)   # 128 x 128 -> 128 x 9
 
-        # Tronco compartido entre ambas cabezas
+        # Tronco compartido entre ambas cabezas, aplicado POR POSICIÓN
+        # (Conv1d kernel_size=1 en vez de Linear): mismos pesos de
+        # extracción de features en cada uno de los 9 slots, pero cada
+        # slot mantiene su propia salida — no se mezcla información entre
+        # canales en el tronco ni en las cabezas.
         self.tronco = nn.Sequential(
-            nn.Linear(128, 64),
+            nn.Conv1d(128, 64, kernel_size=1),
+            nn.BatchNorm1d(64),
             nn.ReLU(inplace=True),
             nn.Dropout(p=dropout),
         )
 
-        self.cabeza_ocupacion = nn.Linear(64, n_canales_salida)   # logits, sin Sigmoid
-        self.cabeza_margen    = nn.Linear(64, n_canales_salida)   # regresión lineal, dB
+        # Cabezas 1x1: (batch, 64, 9) -> (batch, 1, 9), sin Sigmoid en ocupación
+        self.cabeza_ocupacion = nn.Conv1d(64, 1, kernel_size=1)
+        self.cabeza_margen    = nn.Conv1d(64, 1, kernel_size=1)
 
         self._inicializar_pesos()
 
@@ -212,10 +228,12 @@ class SpectralSenseCNN(nn.Module):
         x = x.unsqueeze(1)          # (batch, 512) -> (batch, 1, 512)
         x = self.bloque1(x)
         x = self.bloque2(x)
-        x = self.bloque3(x)
-        x = self.gap(x).squeeze(-1)
-        x = self.tronco(x)
-        return self.cabeza_ocupacion(x), self.cabeza_margen(x)
+        x = self.bloque3(x)                 # (batch, 128, 128)
+        x = self.pool_posicional(x)         # (batch, 128, 9) -- una franja por canal
+        x = self.tronco(x)                  # (batch, 64, 9)
+        logits_ocupacion = self.cabeza_ocupacion(x).squeeze(1)   # (batch, 9)
+        margen_db         = self.cabeza_margen(x).squeeze(1)     # (batch, 9)
+        return logits_ocupacion, margen_db
 
     def predecir(self, x: torch.Tensor, umbral: float = UMBRAL_LIBRE) -> dict:
         """

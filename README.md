@@ -694,24 +694,26 @@ class ChannelClassifier:
 | Tasa de falsos negativos (libre→ocupado) | <5% | Asimetría regulatoria: interferir a un primario es la falla inaceptable, no la conservadora |
 | Umbral operativo de campo | 0.20 (no 0.5) | Mismo razonamiento de costo asimétrico; 0.5 se usa solo para evaluar calidad del modelo en entrenamiento |
 | Tiempo de inferencia por sub-banda | <2 ms | Core Ultra 5 225, ONNX Runtime CPU — deja amplio margen sobre el ciclo de 100–200 ms |
-| Tamaño ONNX | <500 KB | El diseño con GAP lo logra naturalmente; deja casi todo el presupuesto original de 2–4 MB sin usar |
+| Tamaño ONNX | <500 KB | El diseño compacto (backbone conv + pooling posicional por canal) lo logra naturalmente; deja casi todo el presupuesto original de 2–4 MB sin usar |
 | Tiempo de evacuación de canal E2E | <300 ms | Campo real (sensado + CNN + control in-band + guarda) |
 
 ### 8.5 Resultados de validación — baseline sobre dataset sintético
 
-Primer entrenamiento completo de extremo a extremo (arquitectura → entrenamiento → ONNX → benchmark), corrido localmente en CPU, 35 épocas sobre 6,000 sub-bandas **sintéticas** (`generar_dataset_sintetico.py`, formato de producción: 9 canales/sub-banda, ambas cabezas etiquetadas):
+Segundo entrenamiento completo de extremo a extremo (arquitectura → entrenamiento → ONNX → benchmark), corrido localmente en CPU, mismos hiperparámetros que el baseline anterior (80 épocas máx., early stopping en la 18 por AUC de validación sin mejora, 6,000 sub-bandas **sintéticas** de `generar_dataset_sintetico.py`, formato de producción: 9 canales/sub-banda, ambas cabezas etiquetadas). Este run reemplaza al primer baseline (AUC 0.8815) tras corregir un defecto de diseño: `SpectralSenseCNN` colapsaba las 128 posiciones espaciales del backbone a UN solo vector global (`AdaptiveAvgPool1d(1)`) antes de las cabezas de salida, por lo que los 9 logits de ocupación/margen no tenían correspondencia posicional con la región del espectro de cada canal — solo podían aprender correlaciones estadísticas agregadas. Se reemplazó por pooling posicional (`AdaptiveAvgPool1d(9)`) + tronco/cabezas como `Conv1d(kernel_size=1)` aplicados por posición, de forma que cada uno de los 9 canales de salida se deriva de su propia franja de features locales. También se corrigió `generar_dataset_sintetico.py` para que el offset del canal 0 dentro de los 512 bins sea fijo (basado en `N_CANALES_MAX=9`, no en `n_canales` de la sub-banda), evitando que las posiciones de barrido de 7 canales quedaran desalineadas con la convención de etiquetas:
 
 | Métrica | Resultado |
 |---|---|
-| AUC-ROC global (test) | 0.8815 |
-| F1(β=2) @ umbral de campo 0.20 | 0.8014 |
-| Sensibilidad @ 0.20 (detección de primarios) | 98.5% (38 falsos negativos / 7,746 etiquetas) |
-| Especificidad @ 0.20 | 45.3% |
-| Latencia ONNX Runtime (CPU) | 0.089 ms media, 0.135 ms P99 |
-| Tamaño modelo ONNX | 26.2 KB |
-| Parámetros entrenables | 107,986 |
+| AUC-ROC global (test) | 1.0000 (antes: 0.8815) |
+| F1(β=2) @ umbral de campo 0.20 | 0.9871 (antes: 0.8014) |
+| Sensibilidad @ 0.20 (detección de primarios) | 98.39% (40 falsos negativos / 7,746 etiquetas) (antes: 98.5%) |
+| Especificidad @ 0.20 | 100.00% (antes: 45.3%) |
+| Latencia ONNX Runtime (CPU) | 0.562 ms media, 0.630 ms P99 (antes: 0.089 ms media, 0.135 ms P99) |
+| Tamaño modelo ONNX | 62.9 KB (antes: 26.2 KB) |
+| Parámetros entrenables | 107,074 (antes: 107,986) |
 
 > **Esto valida el pipeline (arquitectura, entrenamiento dual-head, export ONNX, presupuesto de latencia), no el desempeño en campo.** El dataset sintético modela artefactos plausibles del bladeRF (rolloff, ripple, DC leakage, fuga espectral entre canales) pero no una señal ISDB-Tb real, ni efectos de propagación/terreno, ni el plan de asignación de canales TV real de la zona de despliegue. Estos números son un baseline de referencia para confirmar que el código funciona — la validación real depende de capturar sub-bandas reales con el bladeRF (§12) y, idealmente, hacer fine-tuning o al menos evaluación sobre esos datos antes de tratarlos como cifras de desempeño operativo.
+>
+> **AUC=1.0000 y especificidad=100% son sospechosamente perfectos** y ameritan lectura crítica, no solo celebración: con el offset del canal 0 ahora fijo, cada canal TVWS cae en un rango de bins determinista dentro de las 512 muestras del PSD sintético, así que el modelo puede aprender "qué franja de bins mirar" de forma casi exacta — una regularidad que el dataset sintético ofrece limpiamente pero que una señal ISDB-Tb real, con ruido de canal, drift de frecuencia y propagación real, no garantiza. La mejora de especificidad (45.3% → 100%) es consistente con el diagnóstico de pooling posicional (el modelo ya no tiene que adivinar a qué canal atribuir cada logit), pero el salto a AUC perfecto es una señal de que el dataset sintético se volvió más fácil, no necesariamente de que el modelo generalizará igual de bien en campo.
 
 ---
 

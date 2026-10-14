@@ -223,9 +223,18 @@ def generar_subbanda(estados: np.ndarray, rng: np.random.Generator,
     potencia_lineal = rng.exponential(scale=1.0, size=N_FFT)
     psd_db = 10 * np.log10(potencia_lineal + 1e-12) + nivel_ruido_db
 
-    # 2. Calcular márgenes: centrar los n_canales*BINS_POR_CANAL bins en 512
-    total_bins_senal = n_canales * BINS_POR_CANAL
-    margen           = max(0, (N_FFT - total_bins_senal) // 2)
+    # 2. Offset de inicio del canal 0: SIEMPRE fijo respecto a N_CANALES (9),
+    #    no a n_canales (7 u 9 según la posición de barrido). Si se centrara
+    #    respecto a n_canales, el canal 0 arrancaría en un bin distinto según
+    #    la posición (p.ej. bin ~8 en las 4 posiciones de 9 canales, pero
+    #    bin ~63 en la posición 4 de 7 canales) -- pero generar_muestra()
+    #    siempre etiqueta etiquetas[0] como "el primer canal visible", y el
+    #    pooling posicional de SpectralSenseCNN asume que el segmento 0 del
+    #    vector pooled corresponde al canal 0. Con margen fijo, los "canales
+    #    faltantes" de la posición 4 (7 de 9) simplemente dejan bins de
+    #    ruido sin usar al final en vez de repartir el padding simétricamente.
+    total_bins_max = N_CANALES * BINS_POR_CANAL
+    margen         = max(0, (N_FFT - total_bins_max) // 2)
 
     # 3. Generar y colocar la envolvente de cada canal
     snrs = np.zeros(n_canales)
@@ -428,8 +437,9 @@ def verificar_muestras(salida: str, n: int = 4):
 
         ax.plot(freqs, psd, linewidth=0.8, color="#378ADD")
 
-        # Sombrear cada canal según su etiqueta
-        margen = max(0, (N_FFT - n_vis * BINS_POR_CANAL) // 2)
+        # Sombrear cada canal según su etiqueta (mismo margen fijo que
+        # generar_subbanda(): basado en N_CANALES, no en n_vis)
+        margen = max(0, (N_FFT - N_CANALES * BINS_POR_CANAL) // 2)
         for i in range(n_vis):
             inicio_bin = margen + i * BINS_POR_CANAL
             fin_bin    = inicio_bin + BINS_POR_CANAL
