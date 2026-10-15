@@ -1,0 +1,11 @@
+# Dependencias extra de IA/herramientas/ (recolector_app.py) sobre lo ya
+# listado en IA/requirements.txt. Instalar en el mismo entorno que usa
+# nucleo.py/entrenamiento.py (necesita torch para importar nucleo), no en
+# el Python de sistema:
+#
+#   ~/envs/IA/bin/pip install -r IA/herramientas/requirements.txt
+#   ~/envs/IA/bin/python3 -m streamlit run IA/herramientas/recolector_app.py
+
+streamlit>=1.60
+pandas>=2.0
+requests>=2.30

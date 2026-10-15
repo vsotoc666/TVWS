@@ -208,14 +208,18 @@ IA/
 ├── herramientas/
 │   ├── escanear_tvws.sh           # barrido ancho (rtl_power) + captura I/Q puntual (rtl_sdr) con el NESDR SMArt v5
 │   ├── analizar_barrido.py        # mapea un barrido a los 39 canales del proyecto (14-52), QA de ocupación
-│   └── etiquetar_rnf.py           # etiqueta capturas .iq contra un export manual del RNF -> .npz (formato TVWSDataset)
+│   ├── etiquetar_rnf.py           # etiqueta capturas .iq contra un CSV del RNF -> .npz (formato TVWSDataset)
+│   ├── rnf_web.py                 # consulta en vivo al RNF (rnf.mtc.gob.pe) para distritos de Lima provincia
+│   ├── recolector_app.py          # GUI (Streamlit) de campo: barrido+espectro, RNF, captura+etiquetado, inventario
+│   └── requirements.txt           # streamlit/pandas/requests -- instalar en el mismo entorno que nucleo.py
 │
 ├── dataset/                       # (real, Fase 1) train/val/test en .npz — formato per-canal
+├── dataset_real/                  # (real, en progreso) sesiones reales etiquetadas + CSVs de RNF consultados
 ├── modelos/                       # (generado) checkpoints .pt y modelo .onnx
 └── graficas/                      # (generado) gráficas de evaluación y entrenamiento
 ```
 
-`IA/herramientas/escanear_tvws.sh` es una herramienta de caracterización/sanity-check del entorno RF real (no el pipeline completo de construcción de dataset etiquetado) — ver uso rápido §5. `captura_dataset.py`/`construir_dataset.py` (el pipeline completo descrito en `pipeline_dataset_v2.md`, con etiquetado contra el RNF) siguen sin implementarse.
+`IA/herramientas/recolector_app.py` es la interfaz de campo recomendada para recolectar el dataset real (reemplaza correr `escanear_tvws.sh`/`etiquetar_rnf.py` a mano repetidamente) — ver uso rápido §5. `construir_dataset.py` (split train/val/test por sesión, sobre lo que ya junta `recolector_app.py`) sigue sin implementarse.
 
 ---
 
@@ -295,6 +299,15 @@ python IA/herramientas/etiquetar_rnf.py --capturas ~/tvws_capturas --rnf rnf_mi_
 ```
 
 Produce un `.npz` por captura en el formato exacto que `entrenamiento.TVWSDataset` espera. Esto **no** arma train/val/test ni hace el split por sesión — eso sigue pendiente (`construir_dataset.py`, protocolo completo en `pipeline_dataset_v2.md`).
+
+**Para recolectar en campo (varias zonas/sesiones de horario), usar la GUI en vez de los comandos de arriba a mano:**
+
+```bash
+~/envs/IA/bin/pip install -r IA/herramientas/requirements.txt   # streamlit/pandas/requests, una sola vez
+~/envs/IA/bin/python3 -m streamlit run IA/herramientas/recolector_app.py
+```
+
+Envuelve `escanear_tvws.sh`/`etiquetar_rnf.py`/`rnf_web.py` en una interfaz con pestañas: **Espectro** (barrido + distribución de energía en toda la banda), **RNF** (consulta en vivo a rnf.mtc.gob.pe para cualquier distrito de Lima provincia, o cargar un CSV ya guardado), **Captura + etiquetado** (captura los 39 canales y etiqueta en un solo paso, con barra de progreso y los mismos avisos de QA de `etiquetar_rnf.py`), **Inventario** (cuántas muestras hay por localidad/sesión de horario, contra los mínimos de `pipeline_dataset_v2.md`) y **Hardware** (detección del dispositivo, `rtl_test`). Cada sesión etiquetada queda con un `_sesion.json` (zona, distrito, sesión de horario, ganancia, LNA sí/no) para trazabilidad.
 
 ### 6. Inferencia en campo (uso en producción dentro del Gateway)
 
