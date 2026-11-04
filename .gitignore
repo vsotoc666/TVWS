@@ -4,3 +4,5 @@ venv/
 __pycache__/
 *.py[cod]
 *$py.class
+# Salida del smoke test (entrenamiento.py --modo test), regenerable
+IA/modelos_test/
