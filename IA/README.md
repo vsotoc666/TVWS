@@ -210,8 +210,8 @@ IA/
 │   ├── analizar_barrido.py        # mapea un barrido a los 39 canales del proyecto (14-52), QA de ocupación
 │   ├── etiquetar_rnf.py           # etiqueta capturas .iq contra un CSV del RNF -> .npz (formato TVWSDataset)
 │   ├── rnf_web.py                 # consulta en vivo al RNF (rnf.mtc.gob.pe) para distritos de Lima provincia
-│   ├── recolector_app.py          # GUI (Streamlit) de campo: barrido+espectro, RNF, captura+etiquetado, inventario
-│   └── requirements.txt           # streamlit/pandas/requests -- instalar en el mismo entorno que nucleo.py
+│   ├── recolector_app.py          # GUI (tkinter) de campo: barrido+espectro, RNF, captura+etiquetado, inventario
+│   └── requirements.txt           # requests -- instalar en el mismo entorno que nucleo.py
 │
 ├── dataset/                       # (real, Fase 1) train/val/test en .npz — formato per-canal
 ├── dataset_real/                  # (real, en progreso) sesiones reales etiquetadas + CSVs de RNF consultados
@@ -303,11 +303,11 @@ Produce un `.npz` por captura en el formato exacto que `entrenamiento.TVWSDatase
 **Para recolectar en campo (varias zonas/sesiones de horario), usar la GUI en vez de los comandos de arriba a mano:**
 
 ```bash
-~/envs/IA/bin/pip install -r IA/herramientas/requirements.txt   # streamlit/pandas/requests, una sola vez
-~/envs/IA/bin/python3 -m streamlit run IA/herramientas/recolector_app.py
+~/envs/IA/bin/pip install -r IA/herramientas/requirements.txt   # requests, una sola vez (tkinter/matplotlib ya están disponibles)
+~/envs/IA/bin/python3 IA/herramientas/recolector_app.py
 ```
 
-Envuelve `escanear_tvws.sh`/`etiquetar_rnf.py`/`rnf_web.py` en una interfaz con pestañas: **Espectro** (barrido + distribución de energía en toda la banda), **RNF** (consulta en vivo a rnf.mtc.gob.pe para cualquier distrito de Lima provincia, o cargar un CSV ya guardado), **Captura + etiquetado** (captura los 39 canales y etiqueta en un solo paso, con barra de progreso y los mismos avisos de QA de `etiquetar_rnf.py`), **Inventario** (cuántas muestras hay por localidad/sesión de horario, contra los mínimos de `pipeline_dataset_v2.md`) y **Hardware** (detección del dispositivo, `rtl_test`). Cada sesión etiquetada queda con un `_sesion.json` (zona, distrito, sesión de horario, ganancia, LNA sí/no) para trazabilidad.
+Interfaz de escritorio tkinter (no web) que envuelve `escanear_tvws.sh`/`etiquetar_rnf.py`/`rnf_web.py` en pestañas: **Espectro** (barrido + distribución de energía en toda la banda, gráfico embebido con matplotlib), **RNF** (consulta en vivo a rnf.mtc.gob.pe para cualquier distrito de Lima provincia, o cargar un CSV ya guardado), **Captura + etiquetado** (captura los 39 canales y etiqueta en un solo paso, con barra de progreso y los mismos avisos de QA de `etiquetar_rnf.py`), **Inventario** (cuántas muestras hay por localidad/hora de sesión, contra los mínimos de `pipeline_dataset_v2.md`) y **Hardware** (detección del dispositivo, `rtl_test`). La barra de sesión (arriba de las pestañas) pide una hora exacta (HH:MM, no una categoría mañana/tarde/noche) para poder correlacionar después la ocupación con el horario real de la captura. Cada sesión etiquetada queda con un `_sesion.json` (zona, distrito, hora exacta, ganancia, LNA sí/no) para trazabilidad. Las operaciones largas (barrido, consulta RNF, captura de 39 canales) corren en un hilo de fondo para no congelar la ventana.
 
 ### 6. Inferencia en campo (uso en producción dentro del Gateway)
 
