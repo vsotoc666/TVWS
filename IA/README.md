@@ -255,7 +255,12 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 ```bash
 python generar_dataset_sintetico.py --n_muestras 6000 --salida ./dataset_v2
+
+# Opcional: 15% de los canales ocupados con TV analógica NTSC-M (default: 0, solo ISDB-Tb)
+python generar_dataset_sintetico.py --n_muestras 6000 --prob_ntsc 0.15 --salida ./dataset_ntsc
 ```
+
+Cada `.npz` guarda `tipo_senal` (-1 no visible, 0 libre, 1 ISDB-Tb, 2 NTSC-M) para poder medir el desempeño por tipo de señal.
 
 ### 2. Entrenar
 

@@ -23,15 +23,17 @@ Características simuladas por sub-banda:
   - Variación de piso de ruido por captura (RF ambiente distinto)
   - Respuesta en frecuencia no plana del bladeRF (más suave que RTL-SDR)
   - Variabilidad de SNR, offset de frecuencia y nivel por canal
+  - Opcional (--prob_ntsc): canales ocupados con TV analógica NTSC-M
 
 Uso:
   python generar_dataset_sintetico_v2.py
   python generar_dataset_sintetico_v2.py --n_muestras 8000 --salida ./dataset_v2
   python generar_dataset_sintetico_v2.py --n_muestras 4000 --ocupacion_media 0.35 --visualizar
+  python generar_dataset_sintetico_v2.py --n_muestras 6000 --prob_ntsc 0.15 --salida ./dataset_ntsc
 
 Salida:
   dataset_v2/
-    train/   muestra_XXXXXX.npz   (psd(512,), etiquetas(9,), posicion)
+    train/   muestra_XXXXXX.npz   (psd(512,), etiquetas(9,), margen_db(9,), posicion, tipo_senal(9,))
     val/
     test/
     metadata.json
@@ -60,6 +62,14 @@ POSICIONES_BARRIDO = [
     {"centro_mhz": 626, "canales_globales": list(range(38, 47))},  # 9 canales
     {"centro_mhz": 670, "canales_globales": list(range(46, 53))},  # 7 canales
 ]
+
+# Portadoras NTSC-M respecto al borde inferior del canal de 6 MHz
+F_VIDEO_NTSC_MHZ = 1.25
+F_COLOR_NTSC_MHZ = 4.83
+F_AUDIO_NTSC_MHZ = 5.75
+
+# Tipo de señal por canal (se guarda en cada .npz como `tipo_senal`)
+TIPO_NO_VISIBLE, TIPO_LIBRE, TIPO_ISDB, TIPO_NTSC = -1, 0, 1, 2
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -111,6 +121,47 @@ def envolvente_canal_ocupado(ancho_bins: int, snr_db: float,
             env[i] += amp_fase / (1 + (dist / (radio * 0.1)) ** 2)
 
     return env
+
+
+def envolvente_canal_ntsc(ancho_bins: int, snr_db: float,
+                          rng: np.random.Generator) -> np.ndarray:
+    """
+    Envolvente de un canal ocupado con TV analógica NTSC-M dentro de su
+    segmento de `ancho_bins` (en dB, relativa al piso de ruido = 0).
+    `snr_db` es el nivel de la portadora de video.
+
+    Las posiciones de las portadoras son las del estándar: video a +1.25 MHz
+    del borde inferior, color a +4.83 MHz y audio a +5.75 MHz. Los niveles
+    relativos y la caída de las bandas laterales son rangos aproximados, no
+    una medición: el contenido de video cambia esa forma de un cuadro a otro.
+    """
+    bins_por_mhz = ancho_bins / 6.0
+    deriva = int(rng.integers(-1, 2))   # error de sintonía de la captura
+    bin_video = int(round(F_VIDEO_NTSC_MHZ * bins_por_mhz)) + deriva
+    bin_color = int(round(F_COLOR_NTSC_MHZ * bins_por_mhz)) + deriva
+    bin_audio = int(round(F_AUDIO_NTSC_MHZ * bins_por_mhz)) + deriva
+
+    # Bandas laterales de luminancia: banda lateral vestigial por debajo de
+    # la portadora (cae rápido) y caída gradual por encima, según el contenido.
+    bins = np.arange(ancho_bins)
+    caida_inferior = rng.uniform(20, 30)   # dB por MHz
+    caida_superior = rng.uniform(6, 12)    # dB por MHz
+    nivel_lateral  = snr_db - rng.uniform(12, 22)
+    dist_mhz = (bins - bin_video) / bins_por_mhz
+    env = np.where(dist_mhz < 0,
+                   nivel_lateral + caida_inferior * dist_mhz,
+                   nivel_lateral - caida_superior * dist_mhz)
+
+    # Las portadoras son más angostas que un bin: se suman como picos
+    def poner_pico(indice: int, nivel_db: float) -> None:
+        if 0 <= indice < ancho_bins:
+            env[indice] = max(env[indice], nivel_db)
+
+    poner_pico(bin_video, snr_db)
+    poner_pico(bin_color, snr_db - rng.uniform(15, 25))
+    poner_pico(bin_audio, snr_db - rng.uniform(7, 15))
+
+    return np.maximum(env, 0.0)
 
 
 def respuesta_frecuencia_bladerf(n_bins: int, rng: np.random.Generator) -> np.ndarray:
@@ -197,7 +248,8 @@ def generar_estados_ocupacion(n_canales: int, ocupacion_media: float,
 
 
 def generar_subbanda(estados: np.ndarray, rng: np.random.Generator,
-                     nivel_ruido_db: float = None) -> tuple:
+                     nivel_ruido_db: float = None,
+                     es_ntsc: np.ndarray = None) -> tuple:
     """
     Construye el vector PSD completo (512,) de una sub-banda de 56 MHz
     a partir del vector de estados de ocupación de cada canal visible.
@@ -206,6 +258,8 @@ def generar_subbanda(estados: np.ndarray, rng: np.random.Generator,
         estados:        array (n_canales,) con 0=libre, 1=ocupado
         rng:            generador de números aleatorios
         nivel_ruido_db: piso de ruido de la captura (si None, aleatorio)
+        es_ntsc:        array booleano (n_canales,): canales ocupados que
+                        transmiten NTSC-M en vez de ISDB-Tb (si None, ninguno)
 
     Returns:
         (psd_db, margen_db): psd_db (512,) en dB sin normalizar, y
@@ -216,6 +270,8 @@ def generar_subbanda(estados: np.ndarray, rng: np.random.Generator,
         cabeza de margen de SpectralSenseCNN.
     """
     n_canales = len(estados)
+    if es_ntsc is None:
+        es_ntsc = np.zeros(n_canales, dtype=bool)
     if nivel_ruido_db is None:
         nivel_ruido_db = rng.uniform(-85, -75)
 
@@ -246,9 +302,12 @@ def generar_subbanda(estados: np.ndarray, rng: np.random.Generator,
             continue
 
         if ocupado:
-            snr_db      = rng.uniform(10, 35)
-            offset_bins = int(rng.integers(-3, 4))
-            env = envolvente_canal_ocupado(ancho, snr_db, offset_bins, rng)
+            snr_db = rng.uniform(10, 35)
+            if es_ntsc[i]:
+                env = envolvente_canal_ntsc(ancho, snr_db, rng)
+            else:
+                offset_bins = int(rng.integers(-3, 4))
+                env = envolvente_canal_ocupado(ancho, snr_db, offset_bins, rng)
             snrs[i] = snr_db
         else:
             env = np.zeros(ancho)
@@ -258,10 +317,11 @@ def generar_subbanda(estados: np.ndarray, rng: np.random.Generator,
 
     # 4. Fuga espectral entre canales adyacentes (adjacent channel leakage)
     #    Si un canal ocupado tiene alta SNR, sus bins de borde "sangran"
-    #    hacia el canal vecino libre.
+    #    hacia el canal vecino libre. No aplica a NTSC: su energía se concentra
+    #    en portadoras, no en una meseta que llegue a los bordes del canal.
     n_bleed = max(2, BINS_POR_CANAL // 12)   # ~4-5 bins de fuga
     for i, ocupado in enumerate(estados):
-        if not ocupado or snrs[i] < 15:
+        if not ocupado or es_ntsc[i] or snrs[i] < 15:
             continue
         inicio = margen + i * BINS_POR_CANAL
         fin    = inicio + BINS_POR_CANAL
@@ -291,17 +351,25 @@ def generar_subbanda(estados: np.ndarray, rng: np.random.Generator,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def generar_muestra(posicion_idx: int, ocupacion_media: float,
-                    rng: np.random.Generator) -> dict:
+                    rng: np.random.Generator, prob_ntsc: float = 0.0) -> dict:
     """
     Genera una muestra completa: sub-banda + etiquetas de los 9 canales
     (con -1 de relleno en posiciones fuera de rango, solo posición 4).
+
+    `prob_ntsc` es la probabilidad de que un canal ocupado transmita NTSC-M
+    en vez de ISDB-Tb. Con 0.0 no se consume ningún número aleatorio extra,
+    así que una misma semilla reproduce los datasets anteriores a esta opción.
     """
     canales_pos = POSICIONES_BARRIDO[posicion_idx]["canales_globales"]
     n_visibles  = len(canales_pos)   # 9 o 7
 
     estados = generar_estados_ocupacion(n_visibles, ocupacion_media, rng)
 
-    psd_db, margen_local = generar_subbanda(estados, rng)
+    es_ntsc = np.zeros(n_visibles, dtype=bool)
+    if prob_ntsc > 0:
+        es_ntsc = (estados == 1) & (rng.random(n_visibles) < prob_ntsc)
+
+    psd_db, margen_local = generar_subbanda(estados, rng, es_ntsc=es_ntsc)
     psd_db   = corregir_dc_offset(psd_db)
     psd_norm = normalizar_psd(psd_db)
 
@@ -311,11 +379,17 @@ def generar_muestra(posicion_idx: int, ocupacion_media: float,
     margen_db = np.zeros(N_CANALES, dtype=np.float32)
     margen_db[:n_visibles] = margen_local.astype(np.float32)
 
+    tipo_senal = np.full(N_CANALES, TIPO_NO_VISIBLE, dtype=np.int8)
+    tipo_senal[:n_visibles] = np.where(
+        estados == 0, TIPO_LIBRE, np.where(es_ntsc, TIPO_NTSC, TIPO_ISDB)
+    )
+
     return {
-        "psd":       psd_norm,
-        "etiquetas": etiquetas,
-        "margen_db": margen_db,
-        "posicion":  posicion_idx
+        "psd":        psd_norm,
+        "etiquetas":  etiquetas,
+        "margen_db":  margen_db,
+        "posicion":   posicion_idx,
+        "tipo_senal": tipo_senal
     }
 
 
@@ -326,7 +400,8 @@ def generar_muestra(posicion_idx: int, ocupacion_media: float,
 def construir_dataset(n_muestras: int = 6000,
                       ocupacion_media: float = 0.32,
                       salida: str = "./dataset_v2",
-                      semilla: int = 42) -> dict:
+                      semilla: int = 42,
+                      prob_ntsc: float = 0.0) -> dict:
     rng = np.random.default_rng(semilla)
 
     splits     = {"train": 0.70, "val": 0.15, "test": 0.15}
@@ -344,28 +419,32 @@ def construir_dataset(n_muestras: int = 6000,
     # Estadísticas
     total_etiquetas_validas = 0
     total_ocupado = 0
+    total_ntsc = 0
     conteo_por_canal_ocup = np.zeros(N_CANALES)
     conteo_por_canal_tot  = np.zeros(N_CANALES)
 
     print(f"\nGenerando {n_muestras} sub-bandas sintéticas TVWS (formato de campo)...")
     print(f"  Ocupación media objetivo: {ocupacion_media:.0%}")
+    print(f"  Canales ocupados con NTSC-M: {prob_ntsc:.0%}")
     print(f"  Splits: train={n_train} val={n_val} test={n_test}")
     print()
 
     for split in tqdm(plan, desc="Generando sub-bandas"):
         posicion_idx = int(rng.integers(0, 5))
-        muestra = generar_muestra(posicion_idx, ocupacion_media, rng)
+        muestra = generar_muestra(posicion_idx, ocupacion_media, rng, prob_ntsc)
 
         idx      = contadores[split]
         ruta_npz = os.path.join(salida, split, f"muestra_{idx:06d}.npz")
         np.savez_compressed(
             ruta_npz,
-            psd       = muestra["psd"],
-            etiquetas = muestra["etiquetas"],
-            margen_db = muestra["margen_db"],
-            posicion  = np.array(muestra["posicion"], dtype=np.int8)
+            psd        = muestra["psd"],
+            etiquetas  = muestra["etiquetas"],
+            margen_db  = muestra["margen_db"],
+            posicion   = np.array(muestra["posicion"], dtype=np.int8),
+            tipo_senal = muestra["tipo_senal"]
         )
         contadores[split] += 1
+        total_ntsc += int(np.sum(muestra["tipo_senal"] == TIPO_NTSC))
 
         for c, e in enumerate(muestra["etiquetas"]):
             if e >= 0:
@@ -389,6 +468,8 @@ def construir_dataset(n_muestras: int = 6000,
         "n_canales":       N_CANALES,
         "bins_por_canal":  BINS_POR_CANAL,
         "ocupacion_media_objetivo": ocupacion_media,
+        "prob_ntsc":                prob_ntsc,
+        "total_canales_ntsc":       total_ntsc,
         "balance_global_ocupado":   round(balance_global, 3),
         "balance_por_posicion_local": balance_por_canal,
         "total_etiquetas_validas": int(total_etiquetas_validas),
@@ -401,6 +482,8 @@ def construir_dataset(n_muestras: int = 6000,
                             "respuesta en frecuencia bladeRF (rolloff + ripple)",
                             "LO leakage / DC offset bladeRF",
                             "ruido de fase cerca de bordes de canal"]
+                           + (["NTSC-M (portadoras de video, color y audio + bandas laterales)"]
+                              if prob_ntsc > 0 else [])
     }
     with open(os.path.join(salida, "metadata.json"), "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2, ensure_ascii=False)
@@ -479,6 +562,9 @@ def main():
                         help="Total de sub-bandas a generar (default: 6000)")
     parser.add_argument("--ocupacion_media", type=float, default=0.32,
                         help="Ocupación media objetivo por canal (default: 0.32)")
+    parser.add_argument("--prob_ntsc", type=float, default=0.0,
+                        help="Probabilidad de que un canal ocupado transmita NTSC-M "
+                             "en vez de ISDB-Tb (default: 0.0, solo ISDB-Tb)")
     parser.add_argument("--salida", type=str, default="./dataset_v2")
     parser.add_argument("--semilla", type=int, default=42)
     parser.add_argument("--visualizar", action="store_true")
@@ -487,12 +573,16 @@ def main():
     if not (0.05 <= args.ocupacion_media <= 0.95):
         print("ERROR: --ocupacion_media debe estar entre 0.05 y 0.95")
         return
+    if not (0.0 <= args.prob_ntsc <= 1.0):
+        print("ERROR: --prob_ntsc debe estar entre 0.0 y 1.0")
+        return
 
     metadata = construir_dataset(
         n_muestras      = args.n_muestras,
         ocupacion_media = args.ocupacion_media,
         salida          = args.salida,
-        semilla         = args.semilla
+        semilla         = args.semilla,
+        prob_ntsc       = args.prob_ntsc
     )
 
     print("\nDataset v2 generado:")
